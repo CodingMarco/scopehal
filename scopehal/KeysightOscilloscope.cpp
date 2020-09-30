@@ -458,16 +458,6 @@ bool KeysightOscilloscope::AcquireData()
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 	LogIndenter li;
 
-	unsigned int format;
-	unsigned int type;
-	size_t length;
-	unsigned int average_count;
-	double xincrement;
-	double xorigin;
-	double xreference;
-	double yincrement;
-	double yorigin;
-	double yreference;
 	std::map<int, std::vector<AnalogWaveform*> > pending_waveforms;
 	for(size_t i=0; i<m_analogChannelCount; i++)
 	{
@@ -476,13 +466,11 @@ bool KeysightOscilloscope::AcquireData()
 
 		// Set source & get preamble
 		m_transport->SendCommand(":WAV:SOUR " + m_channels[i]->GetHwname());
-		m_transport->SendCommand(":WAV:PRE?");
-		std::string reply = m_transport->ReadReply();
-		sscanf(reply.c_str(), "%u,%u,%lu,%u,%lf,%lf,%lf,%lf,%lf,%lf",
-				&format, &type, &length, &average_count, &xincrement, &xorigin, &xreference, &yincrement, &yorigin, &yreference);
+
+		WaveformPreamble waveformParameters = GetWaveformPreamble();
 
 		//Figure out the sample rate
-		int64_t ps_per_sample = round(xincrement * 1e12f);
+		int64_t ps_per_sample = round(waveformParameters.xincrement * 1e12f);
 		//LogDebug("%ld ps/sample\n", ps_per_sample);
 
 		//LogDebug("length = %d\n", length);
@@ -516,12 +504,14 @@ bool KeysightOscilloscope::AcquireData()
 		m_transport->ReadRawData(1, (unsigned char*)tmp);
 
 		//Format the capture
-		cap->Resize(length);
-		for(size_t j=0; j<length; j++)
+		cap->Resize(waveformParameters.length);
+		for(size_t j=0; j<waveformParameters.length; j++)
 		{
 			cap->m_offsets[j] = j;
 			cap->m_durations[j] = 1;
-			cap->m_samples[j] = yincrement * (temp_buf[j] - yreference) + yorigin;
+			cap->m_samples[j] = waveformParameters.yincrement
+					* (temp_buf[j] - waveformParameters.yreference)
+					+ waveformParameters.yorigin;
 		}
 
 		//Done, update the data
@@ -774,6 +764,30 @@ void KeysightOscilloscope::PushEdgeTrigger(EdgeTrigger* trig)
 		default:
 			return;
 	}
+}
+
+WaveformPreamble KeysightOscilloscope::GetWaveformPreamble()
+{
+	std::lock_guard<std::recursive_mutex> lock(m_mutex);
+
+	m_transport->SendCommand(":WAV:PRE?");
+	std::string reply = m_transport->ReadReply();
+
+	std::stringstream ss(reply);
+	WaveformPreamble ret;
+
+	ss >> ret.format; ss.ignore();
+	ss >> ret.type; ss.ignore();
+	ss >> ret.length; ss.ignore();
+	ss >> ret.average_count; ss.ignore();
+	ss >> ret.xincrement; ss.ignore();
+	ss >> ret.xorigin; ss.ignore();
+	ss >> ret.xreference; ss.ignore();
+	ss >> ret.yincrement; ss.ignore();
+	ss >> ret.yorigin; ss.ignore();
+	ss >> ret.yreference;
+
+	return ret;
 }
 
 std::vector<std::string> KeysightOscilloscope::GetTriggerTypes()
