@@ -54,7 +54,7 @@ KeysightOscilloscope::KeysightOscilloscope(SCPITransport* transport)
 	for(int i=0; i<nchans; i++)
 	{
 		//Hardware name of the channel
-		std::string chname = std::string(":CHAN") + std::to_string(i);
+		std::string chname = std::string("CHAN") + std::to_string(i+1);
 
 		//Color the channels based on Keysight's standard color sequence (yellow-green-violet-pink)
 		std::string color = "#ffffff";
@@ -189,7 +189,7 @@ bool KeysightOscilloscope::IsChannelEnabled(size_t i)
 	std::string reply;
 	{
 		std::lock_guard<std::recursive_mutex> lock(m_mutex);
-		m_transport->SendCommand(m_channels[i]->GetHwname() + ":DISP?");
+		m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":DISP?");
 		reply = m_transport->ReadReply();
 	}
 
@@ -210,7 +210,7 @@ void KeysightOscilloscope::EnableChannel(size_t i)
 {
 	{
 		std::lock_guard<std::recursive_mutex> lock(m_mutex);
-		m_transport->SendCommand(m_channels[i]->GetHwname() + ":DISP ON");
+		m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":DISP ON");
 	}
 
 	std::lock_guard<std::recursive_mutex> lock2(m_cacheMutex);
@@ -221,7 +221,7 @@ void KeysightOscilloscope::DisableChannel(size_t i)
 {
 	{
 		std::lock_guard<std::recursive_mutex> lock(m_mutex);
-		m_transport->SendCommand(m_channels[i]->GetHwname() + ":DISP OFF");
+		m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":DISP OFF");
 	}
 
 
@@ -240,9 +240,9 @@ OscilloscopeChannel::CouplingType KeysightOscilloscope::GetChannelCoupling(size_
 	std::string coup_reply, imp_reply;
 	{
 		std::lock_guard<std::recursive_mutex> lock(m_mutex);
-		m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP?");
+		m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":COUP?");
 		coup_reply = m_transport->ReadReply();
-		m_transport->SendCommand(m_channels[i]->GetHwname() + ":IMP?");
+		m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":IMP?");
 		imp_reply = m_transport->ReadReply();
 	}
 
@@ -269,18 +269,18 @@ void KeysightOscilloscope::SetChannelCoupling(size_t i, OscilloscopeChannel::Cou
 		switch(type)
 		{
 			case OscilloscopeChannel::COUPLE_DC_50:
-				m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP DC");
-				m_transport->SendCommand(m_channels[i]->GetHwname() + ":IMP FIFT");
+				m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":COUP DC");
+				m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":IMP FIFT");
 				break;
 
 			case OscilloscopeChannel::COUPLE_AC_1M:
-				m_transport->SendCommand(m_channels[i]->GetHwname() + ":IMP ONEM");
-				m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP AC");
+				m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":IMP ONEM");
+				m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":COUP AC");
 				break;
 
 			case OscilloscopeChannel::COUPLE_DC_1M:
-				m_transport->SendCommand(m_channels[i]->GetHwname() + ":IMP ONEM");
-				m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP DC");
+				m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":IMP ONEM");
+				m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":COUP DC");
 				break;
 
 			default:
@@ -303,7 +303,7 @@ double KeysightOscilloscope::GetChannelAttenuation(size_t i)
 	std::string reply;
 	{
 		std::lock_guard<std::recursive_mutex> lock(m_mutex);
-		m_transport->SendCommand(m_channels[i]->GetHwname() + ":PROB?");
+		m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":PROB?");
 		reply = m_transport->ReadReply();
 	}
 
@@ -330,7 +330,7 @@ int KeysightOscilloscope::GetChannelBandwidthLimit(size_t i)
 	std::string reply;
 	{
 		std::lock_guard<std::recursive_mutex> lock(m_mutex);
-		m_transport->SendCommand(m_channels[i]->GetHwname() + ":BWL?");
+		m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":BWL?");
 		reply = m_transport->ReadReply();
 	}
 
@@ -362,7 +362,7 @@ double KeysightOscilloscope::GetChannelVoltageRange(size_t i)
 
 	{
 		std::lock_guard<std::recursive_mutex> lock(m_mutex);
-		m_transport->SendCommand(m_channels[i]->GetHwname() + ":RANGE?");
+		m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":RANGE?");
 
 		reply = m_transport->ReadReply();
 	}
@@ -382,7 +382,7 @@ void KeysightOscilloscope::SetChannelVoltageRange(size_t i, double range)
 
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 	char cmd[128];
-	snprintf(cmd, sizeof(cmd), "%s:RANGE %.4f", m_channels[i]->GetHwname().c_str(), range);
+	snprintf(cmd, sizeof(cmd), "%s:RANGE %.4f", m_channels[i]->GetColonHwname().c_str(), range);
 	m_transport->SendCommand(cmd);
 }
 
@@ -404,7 +404,7 @@ double KeysightOscilloscope::GetChannelOffset(size_t i)
 	std::string reply;
 	{
 		std::lock_guard<std::recursive_mutex> lock(m_mutex);
-		m_transport->SendCommand(m_channels[i]->GetHwname() + ":OFFS?");
+		m_transport->SendCommand(m_channels[i]->GetColonHwname() + ":OFFS?");
 		reply = m_transport->ReadReply();
 	}
 
@@ -425,7 +425,7 @@ void KeysightOscilloscope::SetChannelOffset(size_t i, double offset)
 
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 	char cmd[128];
-	snprintf(cmd, sizeof(cmd), "%s:OFFS %.4f", m_channels[i]->GetHwname().c_str(), -offset);
+	snprintf(cmd, sizeof(cmd), "%s:OFFS %.4f", m_channels[i]->GetColonHwname().c_str(), -offset);
 	m_transport->SendCommand(cmd);
 }
 
@@ -562,7 +562,7 @@ bool KeysightOscilloscope::AcquireData()
 void KeysightOscilloscope::Start()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
-	m_transport->SendCommand("SING");
+	m_transport->SendCommand(":RUN");
 	m_triggerArmed = true;
 	m_triggerOneShot = false;
 }
@@ -570,7 +570,7 @@ void KeysightOscilloscope::Start()
 void KeysightOscilloscope::StartSingleTrigger()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
-	m_transport->SendCommand("SING");
+	m_transport->SendCommand(":SING");
 	m_triggerArmed = true;
 	m_triggerOneShot = true;
 }
@@ -578,7 +578,7 @@ void KeysightOscilloscope::StartSingleTrigger()
 void KeysightOscilloscope::Stop()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
-	m_transport->SendCommand("STOP");
+	m_transport->SendCommand(":STOP");
 	m_triggerArmed = false;
 	m_triggerOneShot = true;
 }
@@ -671,7 +671,7 @@ void KeysightOscilloscope::PullTrigger()
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
 	//Figure out what kind of trigger is active.
-	m_transport->SendCommand("TRIG:MODE?");
+	m_transport->SendCommand(":TRIG:MODE?");
 	std::string reply = m_transport->ReadReply();
 	if (reply == "EDGE")
 		PullEdgeTrigger();
@@ -705,7 +705,7 @@ void KeysightOscilloscope::PullEdgeTrigger()
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
 	//Source
-	m_transport->SendCommand("TRIG:SOUR?");
+	m_transport->SendCommand(":TRIG:SOUR?");
 	std::string reply = m_transport->ReadReply();
 	auto chan = GetChannelByHwName(reply);
 	et->SetInput(0, StreamDescriptor(chan, 0), true);
@@ -713,12 +713,12 @@ void KeysightOscilloscope::PullEdgeTrigger()
 		LogWarning("Unknown trigger source %s\n", reply.c_str());
 
 	//Level
-	m_transport->SendCommand("TRIG:LEV?");
+	m_transport->SendCommand(":TRIG:LEV?");
 	reply = m_transport->ReadReply();
 	et->SetLevel(stof(reply));
 
 	//Edge slope
-	m_transport->SendCommand("TRIG:SLOPE?");
+	m_transport->SendCommand(":TRIG:SLOPE?");
 	reply = m_transport->ReadReply();
 	if (reply == "POS")
 		et->SetType(EdgeTrigger::EDGE_RISING);
@@ -748,27 +748,27 @@ void KeysightOscilloscope::PushEdgeTrigger(EdgeTrigger* trig)
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
 	//Source
-	m_transport->SendCommand(std::string("TRIG:SOURCE ") + trig->GetInput(0).m_channel->GetHwname());
+	m_transport->SendCommand(std::string(":TRIG:SOURCE ") + trig->GetInput(0).m_channel->GetHwname());
 
 	//Level
 	char tmp[32];
-	snprintf(tmp, sizeof(tmp), "TRIG:LEV %.3f", trig->GetLevel());
+	snprintf(tmp, sizeof(tmp), ":TRIG:LEV %.3f", trig->GetLevel());
 	m_transport->SendCommand(tmp);
 
 	//Slope
 	switch((int)trig->GetType())
 	{
 		case EdgeTrigger::EDGE_RISING:
-			m_transport->SendCommand("TRIG:SLOPE POS");
+			m_transport->SendCommand(":TRIG:SLOPE POS");
 			break;
 		case EdgeTrigger::EDGE_FALLING:
-			m_transport->SendCommand("TRIG:SLOPE NEG");
+			m_transport->SendCommand(":TRIG:SLOPE NEG");
 			break;
 		case EdgeTrigger::EDGE_ANY:
-			m_transport->SendCommand("TRIG:SLOPE EITH");
+			m_transport->SendCommand(":TRIG:SLOPE EITH");
 			break;
 		case EdgeTrigger::EDGE_ALTERNATING:
-			m_transport->SendCommand("TRIG:SLOPE ALT");
+			m_transport->SendCommand(":TRIG:SLOPE ALT");
 			break;
 
 		default:

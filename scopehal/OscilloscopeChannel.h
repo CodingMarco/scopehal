@@ -93,6 +93,9 @@ public:
 	std::string GetHwname()
 	{ return m_hwname; }
 
+	std::string GetColonHwname()
+	{ return std::string(":") + m_hwname; }
+
 	///Get the number of data streams
 	size_t GetStreamCount()
 	{ return m_streamNames.size(); }
