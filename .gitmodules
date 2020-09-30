@@ -1,9 +1,9 @@
 [submodule "xptools"]
 	path = xptools
-	url = ../xptools.git
+	url = git@github.com:azonenberg/xptools.git
 [submodule "log"]
 	path = log
-	url = ../logtools.git
+	url = git@github.com:azonenberg/logtools.git
 [submodule "graphwidget"]
 	path = graphwidget
-	url = ../graphwidget.git
+	url = git@github.com:azonenberg/graphwidget.git
