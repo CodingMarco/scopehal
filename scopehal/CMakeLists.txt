@@ -53,6 +53,7 @@ set(SCOPEHAL_SOURCES
 	OscilloscopeChannel.cpp
 	SCPIOscilloscope.cpp
 	AgilentOscilloscope.cpp
+	KeysightOscilloscope.cpp
 	AntikernelLabsOscilloscope.cpp
 	AntikernelLogicAnalyzer.cpp
 	LeCroyOscilloscope.cpp

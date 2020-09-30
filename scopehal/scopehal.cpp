@@ -39,6 +39,7 @@
 #include "AgilentOscilloscope.h"
 #include "AntikernelLabsOscilloscope.h"
 #include "AntikernelLogicAnalyzer.h"
+#include "KeysightOscilloscope.h"
 #include "LeCroyOscilloscope.h"
 #include "RigolOscilloscope.h"
 #include "RohdeSchwarzOscilloscope.h"
@@ -118,6 +119,7 @@ void DriverStaticInit()
 	AddDriverClass(AgilentOscilloscope);
 	AddDriverClass(AntikernelLabsOscilloscope);
 	AddDriverClass(AntikernelLogicAnalyzer);
+	AddDriverClass(KeysightOscilloscope);
 	AddDriverClass(RigolOscilloscope);
 	AddDriverClass(RohdeSchwarzOscilloscope);
 	AddDriverClass(LeCroyOscilloscope);
