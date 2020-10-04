@@ -91,6 +91,7 @@ KeysightOscilloscope::KeysightOscilloscope(SCPITransport* transport)
 		//Configure transport format to raw 8-bit int
 		m_transport->SendCommand(":WAV:SOUR " + chname);
 		m_transport->SendCommand(":WAV:FORM BYTE");
+		m_transport->SendCommand(":WAV:POINTS 32000");
 
 		//Request all points when we download
 		m_transport->SendCommand(":WAV:POIN:MODE RAW");
@@ -552,7 +553,7 @@ bool KeysightOscilloscope::AcquireData()
 void KeysightOscilloscope::Start()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
-	m_transport->SendCommand(":RUN");
+	m_transport->SendCommand(":SING");
 	m_triggerArmed = true;
 	m_triggerOneShot = false;
 }
@@ -580,16 +581,37 @@ bool KeysightOscilloscope::IsTriggerArmed()
 
 std::vector<uint64_t> KeysightOscilloscope::GetSampleRatesNonInterleaved()
 {
-	//FIXME
 	std::vector<uint64_t> ret;
+
+	const int64_t k = 1000;
+	const int64_t m = k*k;
+
+	ret.push_back(4 * k);
+	ret.push_back(10 * k);
+	ret.push_back(20 * k);
+	ret.push_back(40 * k);
+	ret.push_back(100 * k);
+	ret.push_back(200 * k);
+	ret.push_back(400 * k);
+	ret.push_back(1 * m);
+	ret.push_back(4 * m);
+	ret.push_back(10 * m);
+	ret.push_back(20 * m);
+	ret.push_back(40 * m);
+	ret.push_back(100 * m);
+	ret.push_back(200 * m);
+	ret.push_back(313 * m);
+	ret.push_back(1000 * m);
+	ret.push_back(1250 * m);
+	ret.push_back(2500 * m);
+	ret.push_back(5000 * m);
+
 	return ret;
 }
 
 std::vector<uint64_t> KeysightOscilloscope::GetSampleRatesInterleaved()
 {
-	//FIXME
-	std::vector<uint64_t> ret;
-	return ret;
+	return GetSampleRatesNonInterleaved();
 }
 
 std::set<Oscilloscope::InterleaveConflict> KeysightOscilloscope::GetInterleaveConflicts()
@@ -601,9 +623,7 @@ std::set<Oscilloscope::InterleaveConflict> KeysightOscilloscope::GetInterleaveCo
 
 std::vector<uint64_t> KeysightOscilloscope::GetSampleDepthsNonInterleaved()
 {
-	//FIXME
-	std::vector<uint64_t> ret;
-	return ret;
+	return {100, 500, 1000, 5000, 10000, 32000, 128000, 512000, 1000000, 1250000};
 }
 
 std::vector<uint64_t> KeysightOscilloscope::GetSampleDepthsInterleaved()
@@ -615,24 +635,32 @@ std::vector<uint64_t> KeysightOscilloscope::GetSampleDepthsInterleaved()
 
 uint64_t KeysightOscilloscope::GetSampleRate()
 {
-	//FIXME
-	return 1;
+	std::lock_guard<std::recursive_mutex> lock(m_mutex);
+	m_transport->SendCommand(":ACQ:SRATE?");
+
+	return readNR3<uint64_t>();
 }
 
 uint64_t KeysightOscilloscope::GetSampleDepth()
 {
-	//FIXME
-	return 1;
+	std::lock_guard<std::recursive_mutex> lock(m_mutex);
+	m_transport->SendCommand(":ACQ:POINTS?");
+
+	return readNR3<uint64_t>();
 }
 
-void KeysightOscilloscope::SetSampleDepth(uint64_t /*depth*/)
+void KeysightOscilloscope::SetSampleDepth(uint64_t depth)
 {
-	//FIXME
+	std::lock_guard<std::recursive_mutex> lock(m_mutex);
+	LogDebug("%s", ("Setting sample depth to " + std::to_string(depth) + "\n").c_str());
+	m_transport->SendCommand(std::string(":ACQ:POINTS ") + std::to_string(depth));
 }
 
-void KeysightOscilloscope::SetSampleRate(uint64_t /*rate*/)
+void KeysightOscilloscope::SetSampleRate(uint64_t rate)
 {
-	//FIXME
+	std::lock_guard<std::recursive_mutex> lock(m_mutex);
+	LogDebug("%s", ("Setting sample rate to " + std::to_string(rate) + "\n").c_str());
+	m_transport->SendCommand(std::string(":ACQ:SRATE ") + std::to_string(rate));
 }
 
 void KeysightOscilloscope::SetTriggerOffset(int64_t /*offset*/)
@@ -797,3 +825,14 @@ std::vector<std::string> KeysightOscilloscope::GetTriggerTypes()
 	return ret;
 }
 
+
+template<typename T>
+T KeysightOscilloscope::KeysightOscilloscope::readNR3()
+{
+	std::string reply = m_transport->ReadReply();
+	T replyNumber;
+	std::stringstream ss(reply);
+	ss >> replyNumber;
+
+	return replyNumber;
+}

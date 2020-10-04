@@ -124,6 +124,9 @@ protected:
 	void PushEdgeTrigger(EdgeTrigger* trig);
 	WaveformPreamble GetWaveformPreamble();
 
+	template<typename T>
+	inline T readNR3();
+
 public:
 	static std::string GetDriverNameInternal();
 	OSCILLOSCOPE_INITPROC(KeysightOscilloscope)
