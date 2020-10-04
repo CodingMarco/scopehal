@@ -78,6 +78,7 @@ void TransportStaticInit()
 {
 	AddTransportClass(SCPISocketTransport);
 	AddTransportClass(SCPITMCTransport);
+	AddTransportClass(SCPIGPIBTransport);
 	AddTransportClass(SCPIUARTTransport);
 	AddTransportClass(SCPINullTransport);
 	AddTransportClass(VICPSocketTransport);

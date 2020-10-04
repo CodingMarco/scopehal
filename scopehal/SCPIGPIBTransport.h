@@ -29,86 +29,53 @@
 
 /**
 	@file
-	@author Andrew D. Zonenberg
-	@brief Main library include file
+	@author Marco von Rosenberg
+	@brief Declaration of SCPIGPIBTransport
  */
 
-#ifndef scopehal_h
-#define scopehal_h
+#ifdef HAS_GPIB
 
-#include <vector>
-#include <string>
-#include <map>
-#include <stdint.h>
-#include <chrono>
-#include <thread>
+#ifndef SCPIGPIBTransport_h
+#define SCPIGPIBTransport_h
 
-#include <sigc++/sigc++.h>
-#include <cairomm/context.h>
+/**
+	@brief Abstraction of a transport layer for moving SCPI data between endpoints
+ */
+class SCPIGPIBTransport : public SCPITransport
+{
+public:
+	SCPIGPIBTransport(std::string args);
+	virtual ~SCPIGPIBTransport();
 
-#include <yaml-cpp/yaml.h>
+	virtual std::string GetConnectionString();
+	static std::string GetTransportName();
 
-#include "../log/log.h"
-#include "../graphwidget/Graph.h"
+	virtual bool SendCommand(std::string cmd);
+	virtual std::string ReadReply();
+	virtual void ReadRawData(size_t len, unsigned char* buf);
+	virtual void SendRawData(size_t len, const unsigned char* buf);
 
-#include "Unit.h"
-#include "Bijection.h"
-#include "IDTable.h"
+	virtual bool IsCommandBatchingSupported();
+	virtual bool IsConnected();
 
-#include "SCPITransport.h"
-#include "SCPISocketTransport.h"
-#include "SCPIGPIBTransport.h"
-#include "SCPILxiTransport.h"
-#include "SCPINullTransport.h"
-#include "SCPITMCTransport.h"
-#include "SCPIUARTTransport.h"
-#include "VICPSocketTransport.h"
-#include "SCPIDevice.h"
+	TRANSPORT_INITPROC(SCPIGPIBTransport)
 
-#include "OscilloscopeChannel.h"
-#include "FlowGraphNode.h"
-#include "Trigger.h"
+	std::string GetDevicePath()
+	{ return std::to_string(m_deviceAddress); }
 
-#include "Instrument.h"
-#include "FunctionGenerator.h"
-#include "Multimeter.h"
-#include "Oscilloscope.h"
-#include "SCPIOscilloscope.h"
-#include "PowerSupply.h"
+protected:
+	int m_deviceAddress = -1;
 
-#include "Statistic.h"
-#include "FilterParameter.h"
-#include "Filter.h"
-#include "PeakDetectionFilter.h"
-#include "SpectrumChannel.h"
+	int m_handle = -1;
+	int m_timeout;
 
-#include "SParameters.h"
-#include "TouchstoneParser.h"
-#include "IBISParser.h"
+	int m_staging_buf_size;
+	unsigned char *m_staging_buf;
+	int m_data_in_staging_buf;
+	int m_data_offset;
+	bool m_data_depleted;
+};
 
-uint64_t ConvertVectorSignalToScalar(std::vector<bool> bits);
-
-std::string GetDefaultChannelColor(int i);
-
-std::string Trim(std::string str);
-std::string BaseName(std::string const& path);
-
-void TransportStaticInit();
-void DriverStaticInit();
-
-void InitializePlugins();
-void DetectCPUFeatures();
-
-extern bool g_hasAvx512F;
-extern bool g_hasAvx512VL;
-extern bool g_hasAvx512DQ;
-extern bool g_hasAvx2;
-
-//string to size_t conversion
-#ifdef _WIN32
-#define stos(str) static_cast<size_t>(stoll(str))
-#else
-#define stos(str) static_cast<size_t>(stol(str))
 #endif
 
 #endif

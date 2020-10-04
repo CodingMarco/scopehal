@@ -2,6 +2,7 @@ include_directories(${GTKMM_INCLUDE_DIRS} ${SIGCXX_INCLUDE_DIRS})
 link_directories(${GTKMM_LIBRARY_DIRS} ${SIGCXX_LIBRARY_DIRS})
 
 find_library(LXI_LIB lxi)
+find_library(GPIB_LIB gpib)
 
 # Additional WinAPI libraries
 if(WIN32)
@@ -16,6 +17,14 @@ else()
 	set(LXI_LIBRARIES "")
 endif()
 
+if(GPIB_LIB)
+        set(HAS_GPIB true)
+	set(GPIB_LIBRARIES ${GPIB_LIB})
+else()
+        set(HAS_GPIB false)
+	set(GPIB_LIBRARIES "")
+endif()
+
 set(SCOPEHAL_SOURCES
 	base64.cpp
 	scopehal.cpp
@@ -25,6 +34,7 @@ set(SCOPEHAL_SOURCES
 	SCPITransport.cpp
 	SCPISocketTransport.cpp
 	VICPSocketTransport.cpp
+	SCPIGPIBTransport.cpp
 	SCPILxiTransport.cpp
 	SCPINullTransport.cpp
 	SCPITMCTransport.cpp
@@ -78,13 +88,17 @@ set(SCOPEHAL_SOURCES
 
 add_library(scopehal SHARED
 	${SCOPEHAL_SOURCES})
-target_link_libraries(scopehal ${SIGCXX_LIBRARIES} ${GTKMM_LIBRARIES} xptools log graphwidget yaml-cpp ${LXI_LIBRARIES} ${WIN_LIBS})
+target_link_libraries(scopehal ${SIGCXX_LIBRARIES} ${GTKMM_LIBRARIES} xptools log graphwidget yaml-cpp ${LXI_LIBRARIES} ${GPIB_LIBRARIES} ${WIN_LIBS})
 
 target_include_directories(scopehal
 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(${HAS_LXI})
 	target_compile_definitions(scopehal PUBLIC HAS_LXI)
+endif()
+
+if(${HAS_GPIB})
+        target_compile_definitions(scopehal PUBLIC HAS_GPIB)
 endif()
 
 install(TARGETS scopehal LIBRARY DESTINATION /usr/lib)
