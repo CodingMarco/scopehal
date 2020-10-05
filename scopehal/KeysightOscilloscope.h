@@ -32,20 +32,6 @@
 
 class EdgeTrigger;
 
-struct WaveformPreamble
-{
-	unsigned int format;
-	unsigned int type;
-	size_t length;
-	unsigned int average_count;
-	double xincrement;
-	double xorigin;
-	double xreference;
-	double yincrement;
-	double yorigin;
-	double yreference;
-};
-
 class KeysightOscilloscope : public SCPIOscilloscope
 {
 public:
