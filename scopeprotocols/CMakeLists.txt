@@ -17,8 +17,13 @@ set(SCOPEPROTOCOLS_SOURCES
 	DeskewFilter.cpp
 	DownconvertFilter.cpp
 	DownsampleFilter.cpp
+	DPhyDataDecoder.cpp
+	DPhyHSClockRecoveryFilter.cpp
+	DPhySymbolDecoder.cpp
 	DramRefreshActivateMeasurement.cpp
 	DramRowColumnLatencyMeasurement.cpp
+	DSIFrameDecoder.cpp
+	DSIPacketDecoder.cpp
 	DutyCycleMeasurement.cpp
 	DVIDecoder.cpp
 	Ethernet10BaseTDecoder.cpp
@@ -51,6 +56,7 @@ set(SCOPEPROTOCOLS_SOURCES
 	MovingAverageFilter.cpp
 	MultiplyFilter.cpp
 	OFDMDemodulator.cpp
+	OneWireDecoder.cpp
 	OvershootMeasurement.cpp
 	ParallelBus.cpp
 	PeakHoldFilter.cpp
@@ -59,9 +65,14 @@ set(SCOPEPROTOCOLS_SOURCES
 	QuadratureDecoder.cpp
 	QSPIDecoder.cpp
 	RiseMeasurement.cpp
+	SDCmdDecoder.cpp
+	SDDataDecoder.cpp
 	SPIDecoder.cpp
 	SPIFlashDecoder.cpp
 	SubtractFilter.cpp
+	SWDDecoder.cpp
+	SWDMemAPDecoder.cpp
+	TachometerFilter.cpp
 	ThresholdFilter.cpp
 	TIEMeasurement.cpp
 	TMDSDecoder.cpp

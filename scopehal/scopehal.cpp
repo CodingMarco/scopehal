@@ -41,6 +41,7 @@
 #include "AntikernelLogicAnalyzer.h"
 #include "HPOscilloscope.h"
 #include "KeysightOscilloscope.h"
+#include "DemoOscilloscope.h"
 #include "LeCroyOscilloscope.h"
 #include "RigolOscilloscope.h"
 #include "RohdeSchwarzOscilloscope.h"
@@ -50,6 +51,7 @@
 
 #include "DropoutTrigger.h"
 #include "EdgeTrigger.h"
+#include "GlitchTrigger.h"
 #include "PulseWidthTrigger.h"
 #include "RuntTrigger.h"
 #include "SlewRateTrigger.h"
@@ -123,6 +125,7 @@ void DriverStaticInit()
 	AddDriverClass(AntikernelLogicAnalyzer);
 	AddDriverClass(HPOscilloscope);
 	AddDriverClass(KeysightOscilloscope);
+	AddDriverClass(DemoOscilloscope);
 	AddDriverClass(RigolOscilloscope);
 	AddDriverClass(RohdeSchwarzOscilloscope);
 	AddDriverClass(LeCroyOscilloscope);
@@ -132,6 +135,7 @@ void DriverStaticInit()
 
 	AddTriggerClass(DropoutTrigger);
 	AddTriggerClass(EdgeTrigger);
+	AddTriggerClass(GlitchTrigger);
 	AddTriggerClass(PulseWidthTrigger);
 	AddTriggerClass(RuntTrigger);
 	AddTriggerClass(SlewRateTrigger);
@@ -142,8 +146,9 @@ void DriverStaticInit()
 string GetDefaultChannelColor(int i)
 {
 	const int NUM_COLORS = 12;
-	static const char* colorTable[NUM_COLORS]=
+	static const char* colorTable[NUM_COLORS] =
 	{
+		// cppcheck-suppress constStatement
 		"#a6cee3",
 		"#1f78b4",
 		"#b2df8a",
@@ -164,7 +169,7 @@ string GetDefaultChannelColor(int i)
 /**
 	@brief Converts a vector bus signal into a scalar (up to 64 bits wide)
  */
-uint64_t ConvertVectorSignalToScalar(vector<bool> bits)
+uint64_t ConvertVectorSignalToScalar(const vector<bool>& bits)
 {
 	uint64_t rval = 0;
 	for(auto b : bits)
@@ -184,7 +189,7 @@ void InitializePlugins()
 	search_dirs.push_back("/usr/local/lib/scopehal/plugins/");
 
 	//current binary dir
-	char selfPath[1024] = {0};
+	char selfPath[1024] = "";
 	ssize_t readlinkReturn = readlink("/proc/self/exe", selfPath, (sizeof(selfPath) - 1) );
 	if ( readlinkReturn > 0)
 		search_dirs.push_back(dirname(selfPath));
@@ -326,7 +331,7 @@ void InitializePlugins()
 /**
 	@brief Removes whitespace from the start and end of a string
  */
-string Trim(string str)
+string Trim(const string& str)
 {
 	string ret;
 	string tmp;
@@ -355,7 +360,57 @@ string Trim(string str)
 	return ret;
 }
 
-string BaseName(string const & path)
+/**
+	@brief Removes quotes from the start and end of a string
+ */
+string TrimQuotes(const string& str)
+{
+	string ret;
+	string tmp;
+
+	//Skip leading spaces
+	size_t i=0;
+	for(; i<str.length() && (str[i] == '\"'); i++)
+	{}
+
+	//Read non-space stuff
+	for(; i<str.length(); i++)
+	{
+		//Non-quote
+		char c = str[i];
+		if(c != '\"')
+		{
+			ret = ret + tmp + c;
+			tmp = "";
+		}
+
+		//Quote. Save it, only append if we have non-quote after
+		else
+			tmp += c;
+	}
+
+	return ret;
+}
+
+string BaseName(const string & path)
 {
 	return path.substr(path.find_last_of("/\\") + 1);
+}
+
+/**
+	@brief Converts a frequency in Hz to a phase velocity in rad/sec
+ */
+float FreqToPhase(float hz)
+{
+	return 2 * M_PI * hz;
+}
+
+/**
+	@brief Like std::to_string, but output in scientific notation
+ */
+string to_string_sci(double d)
+{
+	char tmp[32];
+	snprintf(tmp, sizeof(tmp), "%e", d);
+	return tmp;
 }

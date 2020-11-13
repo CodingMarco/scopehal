@@ -48,8 +48,8 @@ public:
 	virtual std::string GetConnectionString() =0;
 	virtual std::string GetName() =0;
 
-	virtual bool SendCommand(std::string cmd) =0;
-	virtual std::string ReadReply() =0;
+	virtual bool SendCommand(const std::string& cmd) =0;
+	virtual std::string ReadReply(bool endOnSemicolon = true) =0;
 	virtual void ReadRawData(size_t len, unsigned char* buf) =0;
 	virtual void SendRawData(size_t len, const unsigned char* buf) =0;
 
@@ -57,11 +57,11 @@ public:
 	virtual bool IsConnected() =0;
 
 public:
-	typedef SCPITransport* (*CreateProcType)(std::string args);
+	typedef SCPITransport* (*CreateProcType)(const std::string& args);
 	static void DoAddTransportClass(std::string name, CreateProcType proc);
 
 	static void EnumTransports(std::vector<std::string>& names);
-	static SCPITransport* CreateTransport(std::string transport, std::string args);
+	static SCPITransport* CreateTransport(const std::string& transport, const std::string& args);
 
 protected:
 	//Class enumeration
@@ -70,7 +70,7 @@ protected:
 };
 
 #define TRANSPORT_INITPROC(T) \
-	static SCPITransport* CreateInstance(std::string args) \
+	static SCPITransport* CreateInstance(const std::string& args) \
 	{ \
 		return new T(args); \
 	} \

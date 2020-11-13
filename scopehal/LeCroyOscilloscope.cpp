@@ -36,6 +36,7 @@
 
 #include "DropoutTrigger.h"
 #include "EdgeTrigger.h"
+#include "GlitchTrigger.h"
 #include "PulseWidthTrigger.h"
 #include "RuntTrigger.h"
 #include "SlewRateTrigger.h"
@@ -57,6 +58,7 @@ LeCroyOscilloscope::LeCroyOscilloscope(SCPITransport* transport)
 	, m_hasI2cTrigger(false)
 	, m_hasSpiTrigger(false)
 	, m_hasUartTrigger(false)
+	, m_maxBandwidth(10000)
 	, m_triggerArmed(false)
 	, m_triggerOneShot(false)
 	, m_sampleRateValid(false)
@@ -67,6 +69,8 @@ LeCroyOscilloscope::LeCroyOscilloscope(SCPITransport* transport)
 	, m_triggerOffset(0)
 	, m_interleaving(false)
 	, m_interleavingValid(false)
+	, m_meterMode(Multimeter::DC_VOLTAGE)
+	, m_meterModeValid(false)
 	, m_highDefinition(false)
 {
 	//standard initialization
@@ -99,8 +103,8 @@ void LeCroyOscilloscope::SharedCtorInit()
 	else
 		m_transport->SendCommand("COMM_FORMAT DEF9,BYTE,BIN");
 
-	//Always use "max memory" config for setting sample depth
-	m_transport->SendCommand("VBS 'app.Acquisition.Horizontal.Maximize=\"SetMaximumMemory\"'");
+	//Always use "fixed sample rate" config for setting timebase
+	m_transport->SendCommand("VBS 'app.Acquisition.Horizontal.Maximize=\"FixedSampleRate\"'");
 
 	//If interleaving, disable the extra channels
 	if(IsInterleaving())
@@ -137,32 +141,59 @@ void LeCroyOscilloscope::IdentifyHardware()
 
 	//Look up model info
 	m_modelid = MODEL_UNKNOWN;
+	m_maxBandwidth = 0;
 
 	if(m_model.find("DDA5") == 0)
+	{
 		m_modelid = MODEL_DDA_5K;
+		m_maxBandwidth = 5000;
+	}
 	else if( (m_model.find("HDO4") == 0) && (m_model.find("A") != string::npos) )
+	{
 		m_modelid = MODEL_HDO_4KA;
+		m_maxBandwidth = stoi(m_model.substr(4, 2)) * 100;
+	}
 	else if( (m_model.find("HDO6") == 0) && (m_model.find("A") != string::npos) )
+	{
 		m_modelid = MODEL_HDO_6KA;
+		m_maxBandwidth = stoi(m_model.substr(4, 2)) * 100;
+	}
 	else if(m_model.find("HDO9") == 0)
+	{
 		m_modelid = MODEL_HDO_9K;
+		m_maxBandwidth = stoi(m_model.substr(4, 1)) * 1000;
+	}
 	else if(m_model == "MCM-ZI-A")
+	{
 		m_modelid = MODEL_LABMASTER_ZI_A;
+
+		//For now assume 100 GHz bandwidth.
+		//TODO: ID acquisition modules
+		m_maxBandwidth = 100000;
+	}
 	else if(m_model.find("MDA8") == 0)
 	{
 		m_modelid = MODEL_MDA_800;
 		m_highDefinition = true;	//Doesn't have "HD" in the name but is still 12 bit resolution
+		m_maxBandwidth = stoi(m_model.substr(4, 2)) * 100;
 	}
 	else if(m_model.find("SDA3") == 0)
+	{
 		m_modelid = MODEL_SDA_3K;
-	else if(m_model.find("WM") == 0)
+		m_maxBandwidth = 3000;
+	}
+	else if(m_model.find("WM8") == 0)
 	{
 		if(m_model.find("ZI-B") != string::npos)
 			m_modelid = MODEL_WAVEMASTER_8ZI_B;
+
+		m_maxBandwidth = stoi(m_model.substr(3, 2)) * 1000;
 	}
 	else if(m_model.find("WAVERUNNER8") == 0)
 	{
 		m_modelid = MODEL_WAVERUNNER_8K;
+
+		m_maxBandwidth = stoi(m_model.substr(11, 2)) * 100;
 
 		if(m_model.find("HD") != string::npos)
 			m_modelid = MODEL_WAVERUNNER_8K_HD;
@@ -173,16 +204,24 @@ void LeCroyOscilloscope::IdentifyHardware()
 			m_modelid = MODEL_WAVEPRO_HD;
 	}
 	else if(m_model.find("WAVERUNNER9") == 0)
+	{
 		m_modelid = MODEL_WAVERUNNER_9K;
+		m_maxBandwidth = stoi(m_model.substr(11, 2)) * 100;
+	}
 	else if(m_model.find("WS3") == 0)
+	{
 		m_modelid = MODEL_WAVESURFER_3K;
-
+		m_maxBandwidth = stoi(m_model.substr(3, 2)) * 100;
+	}
 	else if (m_vendor.compare("SIGLENT") == 0)
 	{
 		// TODO: if LeCroy and Siglent classes get split, then this should obviously
 		// move to the Siglent class.
 		if (m_model.compare(0, 4, "SDS2") == 0 && m_model.back() == 'X')
 			m_modelid = MODEL_SIGLENT_SDS2000X;
+
+		//FIXME
+		m_maxBandwidth = 200;
 	}
 
 	else
@@ -194,6 +233,11 @@ void LeCroyOscilloscope::IdentifyHardware()
 	//Enable HD mode by default if model name contains "HD" at any point
 	if(m_model.find("HD") != string::npos)
 		m_highDefinition = true;
+
+	//300 MHz bandwidth doesn't exist on any known scope.
+	//It's always 350, but is normally coded in the model ID as if it were 300.
+	if(m_maxBandwidth == 300)
+		m_maxBandwidth = 350;
 }
 
 void LeCroyOscilloscope::DetectOptions()
@@ -405,6 +449,8 @@ void LeCroyOscilloscope::DetectOptions()
 			//Currently unsupported trigger/decodes, to be added in the future
 			else if(o.find("CAN_FD") == 0)
 				desc = "CAN FD";
+			else if(o.find("FIBER_CH") == 0)
+				desc = "Fibre Channel";
 			else if(o.find("I2S") == 0)
 				desc = "I2S";
 			else if(o.find("I3C") == 0)
@@ -415,6 +461,12 @@ void LeCroyOscilloscope::DetectOptions()
 				desc = "SPMI";
 			else if(o.find("USB2") == 0)
 				desc = "USB2";
+			else if(o.find("USB3") == 0)
+				desc = "USB3";
+			else if(o.find("SATA") == 0)
+				desc = "Serial ATA";
+			else if(o.find("SAS") == 0)
+				desc = "Serial Attached SCSI";
 			else if(o == "HDTV")
 			{
 				type = "Trigger";		//FIXME: Is this just 1080p analog trigger support?
@@ -645,11 +697,12 @@ void LeCroyOscilloscope::AddDigitalChannels(unsigned int count)
 	LogIndenter li;
 
 	m_digitalChannelCount = count;
+	m_digitalChannelBase = m_channels.size();
 
 	char chn[32];
 	for(unsigned int i=0; i<count; i++)
 	{
-		snprintf(chn, sizeof(chn), "D%d", i);
+		snprintf(chn, sizeof(chn), "D%u", i);
 		auto chan = new OscilloscopeChannel(
 			this,
 			chn,
@@ -665,6 +718,9 @@ void LeCroyOscilloscope::AddDigitalChannels(unsigned int count)
 	//Set the threshold to "user defined" vs using a canned family
 	m_transport->SendCommand("VBS? 'app.LogicAnalyzer.MSxxLogicFamily0 = \"USERDEFINED\" '");
 	m_transport->SendCommand("VBS? 'app.LogicAnalyzer.MSxxLogicFamily1 = \"USERDEFINED\" '");
+
+	//Select display to be "CUSTOM" so we can assign nicknames to the bits
+	m_transport->SendCommand("VBS 'app.LogicAnalyzer.Digital1.Labels=\"CUSTOM\"'");
 }
 
 /**
@@ -836,10 +892,12 @@ void LeCroyOscilloscope::FlushConfigCache()
 	m_channelOffsets.clear();
 	m_channelsEnabled.clear();
 	m_channelDeskew.clear();
+	m_channelDisplayNames.clear();
 	m_sampleRateValid = false;
 	m_memoryDepthValid = false;
 	m_triggerOffsetValid = false;
 	m_interleavingValid = false;
+	m_meterModeValid = false;
 }
 
 /**
@@ -930,7 +988,9 @@ bool LeCroyOscilloscope::IsChannelEnabled(size_t i)
 	else
 	{
 		//See if the channel is on
-		m_transport->SendCommand(string("VBS? 'return = app.LogicAnalyzer.Digital1.") + m_channels[i]->GetHwname() + "'");
+		//Note that GetHwname() returns Dn, as used by triggers, not Digitaln, as used here
+		size_t nchan = i - (m_analogChannelCount+1);
+		m_transport->SendCommand(string("VBS? 'return = app.LogicAnalyzer.Digital1.Digital") + to_string(nchan) + "'");
 		string str = m_transport->ReadReply();
 		if(str == "0")
 			m_channelsEnabled[i] = false;
@@ -992,7 +1052,9 @@ void LeCroyOscilloscope::EnableChannel(size_t i)
 			m_transport->SendCommand("VBS 'app.LogicAnalyzer.Digital1.UseGrid=\"YT1\"'");
 
 		//Enable this channel on the hardware
-		m_transport->SendCommand(string("VBS 'app.LogicAnalyzer.Digital1.") + m_channels[i]->GetHwname() + " = 1'");
+		//Note that GetHwname() returns Dn, as used by triggers, not Digitaln, as used here
+		size_t nchan = i - (m_analogChannelCount+1);
+		m_transport->SendCommand(string("VBS 'app.LogicAnalyzer.Digital1.Digital") + to_string(nchan) + " = 1'");
 		char tmp[128];
 		size_t nbit = (i - m_digitalChannels[0]->GetIndex());
 		snprintf(tmp, sizeof(tmp), "VBS 'app.LogicAnalyzer.Digital1.BitIndex%zu = %zu'", nbit, nbit);
@@ -1000,6 +1062,39 @@ void LeCroyOscilloscope::EnableChannel(size_t i)
 	}
 
 	m_channelsEnabled[i] = true;
+}
+
+bool LeCroyOscilloscope::CanEnableChannel(size_t i)
+{
+	//All channels are always legal if we're not interleaving
+	if(!m_interleaving)
+		return true;
+
+	//We are interleaving. Disable channels we're not allowed to use.
+	switch(m_modelid)
+	{
+		case MODEL_DDA_5K:
+		case MODEL_HDO_9K:
+		case MODEL_SDA_3K:
+		case MODEL_HDO_4KA:
+		case MODEL_WAVERUNNER_8K:
+		case MODEL_WAVERUNNER_8K_HD:		//TODO: seems like multiple levels of interleaving possible
+		case MODEL_WAVEMASTER_8ZI_B:
+		case MODEL_WAVEPRO_HD:
+		case MODEL_WAVERUNNER_9K:
+		case MODEL_SIGLENT_SDS2000X:
+			return (i == 1) || (i == 2) || (i > m_analogChannelCount);
+
+		case MODEL_WAVESURFER_3K:			//TODO: can use ch1 if not 2, and ch3 if not 4
+			return (i == 1) || (i == 2) || (i > m_analogChannelCount);
+
+		//No interleaving possible, ignore
+		case MODEL_HDO_6KA:
+		case MODEL_LABMASTER_ZI_A:
+		case MODEL_MDA_800:
+		default:
+			return true;
+	}
 }
 
 void LeCroyOscilloscope::DisableChannel(size_t i)
@@ -1037,7 +1132,8 @@ void LeCroyOscilloscope::DisableChannel(size_t i)
 			m_transport->SendCommand("VBS 'app.LogicAnalyzer.Digital1.UseGrid=\"NotOnGrid\"'");
 
 		//Disable this channel
-		m_transport->SendCommand(string("VBS 'app.LogicAnalyzer.Digital1.") + m_channels[i]->GetHwname() + " = 0'");
+		size_t nchan = i - (m_analogChannelCount+1);
+		m_transport->SendCommand(string("VBS 'app.LogicAnalyzer.Digital1.Digital") + to_string(nchan) + " = 0'");
 	}
 }
 
@@ -1124,6 +1220,116 @@ void LeCroyOscilloscope::SetChannelAttenuation(size_t i, double atten)
 	m_transport->SendCommand(cmd);
 }
 
+vector<unsigned int> LeCroyOscilloscope::GetChannelBandwidthLimiters(size_t /*i*/)
+{
+	vector<unsigned int> ret;
+
+	//"no limit"
+	ret.push_back(0);
+
+	//Supported by almost all known models
+	ret.push_back(20);
+	ret.push_back(200);
+
+	switch(m_modelid)
+	{
+		//Only one DDA5 model is known to exist, no need for bandwidth check
+		case MODEL_DDA_5K:
+			ret.push_back(1000);
+			ret.push_back(3000);
+			ret.push_back(4000);
+			break;
+
+		case MODEL_HDO_9K:
+			ret.push_back(500);
+			if(m_maxBandwidth >= 2000)
+				ret.push_back(1000);
+			if(m_maxBandwidth >= 3000)
+				ret.push_back(2000);
+			if(m_maxBandwidth >= 4000)
+				ret.push_back(3000);
+			break;
+
+		//TODO: this probably depends on which acquisition module is selected?
+		case MODEL_LABMASTER_ZI_A:
+			ret.clear();
+			ret.push_back(0);
+			ret.push_back(1000);
+			ret.push_back(3000);
+			ret.push_back(4000);
+			ret.push_back(6000);
+			ret.push_back(8000);
+			ret.push_back(13000);
+			ret.push_back(16000);
+			ret.push_back(20000);
+			ret.push_back(25000);
+			ret.push_back(30000);
+			ret.push_back(33000);
+			ret.push_back(36000);
+			break;
+
+		case MODEL_MDA_800:
+		case MODEL_WAVERUNNER_8K_HD:
+			if(m_maxBandwidth >= 500)
+				ret.push_back(350);
+			if(m_maxBandwidth >= 1000)
+				ret.push_back(500);
+			if(m_maxBandwidth >= 2000)
+				ret.push_back(1000);
+			break;
+
+		//Seems like the SDA 3010 is part of a family of different scopes with prefix indicating bandwidth.
+		//We should probably change this to SDA_FIRSTGEN or something?
+		case MODEL_SDA_3K:
+			ret.push_back(1000);
+			break;
+
+		case MODEL_WAVEMASTER_8ZI_B:
+			ret.push_back(1000);
+			if(m_maxBandwidth >= 4000)
+				ret.push_back(3000);
+			if(m_maxBandwidth >= 6000)
+				ret.push_back(4000);
+			if(m_maxBandwidth >= 8000)
+				ret.push_back(6000);
+			if(m_maxBandwidth >= 13000)
+				ret.push_back(8000);
+			break;
+
+		case MODEL_WAVEPRO_HD:
+			ret.push_back(500);
+			ret.push_back(1000);
+			if(m_maxBandwidth >= 4000)
+				ret.push_back(2500);
+			if(m_maxBandwidth >= 6000)
+				ret.push_back(4000);
+			if(m_maxBandwidth >= 8000)
+				ret.push_back(6000);
+			break;
+
+		case MODEL_WAVERUNNER_8K:
+		case MODEL_WAVERUNNER_9K:
+			if(m_maxBandwidth >= 2500)
+				ret.push_back(1000);
+			break;
+
+		case MODEL_WAVESURFER_3K:
+			ret.clear();
+			if(m_maxBandwidth >= 350)
+				ret.push_back(200);
+			break;
+
+		//Only the default 20/200
+		case MODEL_HDO_4KA:
+		case MODEL_HDO_6KA:
+		case MODEL_SIGLENT_SDS2000X:
+		default:
+			break;
+	}
+
+	return ret;
+}
+
 int LeCroyOscilloscope::GetChannelBandwidthLimit(size_t i)
 {
 	if(i > m_analogChannelCount)
@@ -1175,14 +1381,109 @@ void LeCroyOscilloscope::SetChannelBandwidthLimit(size_t i, unsigned int limit_m
 	char cmd[128];
 	if(limit_mhz == 0)
 		snprintf(cmd, sizeof(cmd), "BANDWIDTH_LIMIT %s,OFF", m_channels[i]->GetHwname().c_str());
+	else if(limit_mhz >= 1000)
+		snprintf(cmd, sizeof(cmd), "BANDWIDTH_LIMIT %s,%uGHZ", m_channels[i]->GetHwname().c_str(), limit_mhz/1000);
 	else
 		snprintf(cmd, sizeof(cmd), "BANDWIDTH_LIMIT %s,%uMHZ", m_channels[i]->GetHwname().c_str(), limit_mhz);
 
 	m_transport->SendCommand(cmd);
 }
 
+void LeCroyOscilloscope::SetChannelDisplayName(size_t i, string name)
+{
+	auto chan = m_channels[i];
+
+	//External trigger cannot be renamed in hardware.
+	//TODO: allow clientside renaming?
+	if(chan == m_extTrigChannel)
+		return;
+
+	//Update cache
+	{
+		lock_guard<recursive_mutex> lock(m_cacheMutex);
+		m_channelDisplayNames[m_channels[i]] = name;
+	}
+
+	//Update in hardware
+	lock_guard<recursive_mutex> lock(m_mutex);
+	if(i < m_analogChannelCount)
+		m_transport->SendCommand(string("VBS 'app.Acquisition.") + chan->GetHwname() + ".Alias = \"" + name + "\"");
+
+	else
+	{
+		m_transport->SendCommand(string("VBS 'app.LogicAnalyzer.Digital1.CustomBitName") +
+			to_string(i - m_digitalChannelBase) + " = \"" + name + "\"");
+	}
+}
+
+string LeCroyOscilloscope::GetChannelDisplayName(size_t i)
+{
+	auto chan = m_channels[i];
+
+	//External trigger cannot be renamed in hardware.
+	//TODO: allow clientside renaming?
+	if(chan == m_extTrigChannel)
+		return m_extTrigChannel->GetHwname();
+
+	//Check cache first
+	{
+		lock_guard<recursive_mutex> lock(m_cacheMutex);
+		if(m_channelDisplayNames.find(chan) != m_channelDisplayNames.end())
+			return m_channelDisplayNames[chan];
+	}
+
+	lock_guard<recursive_mutex> lock(m_mutex);
+
+	//Analog and digital channels use completely different namespaces, as usual.
+	//Because clean, orthogonal APIs are apparently for losers?
+	string name;
+	if(i < m_analogChannelCount)
+		name = GetPossiblyEmptyString(string("app.Acquisition.") + chan->GetHwname() + ".Alias");
+	else
+	{
+		auto prop = string("app.LogicAnalyzer.Digital1.CustomBitName") + to_string(i - m_digitalChannelBase);
+		name = GetPossiblyEmptyString(prop);
+
+		//Default name, change it to the hwname for now
+		if(name.find("Custom.") == 0)
+		{
+			m_transport->SendCommand(string("VBS '") + prop + " = \"" + chan->GetHwname() + "\"'");
+			name = "";
+		}
+	}
+
+	//Default to using hwname if no alias defined
+	if(name == "")
+		name = chan->GetHwname();
+
+	lock_guard<recursive_mutex> lock2(m_cacheMutex);
+	m_channelDisplayNames[chan] = name;
+
+	return name;
+}
+
+/**
+	@brief Get an
+ */
+string LeCroyOscilloscope::GetPossiblyEmptyString(const string& property)
+{
+	//Get string length first since reading empty strings is problematic over SCPI
+	m_transport->SendCommand(string("VBS? 'return = Len(") + property + ")'");
+	string slen = Trim(m_transport->ReadReply());
+	if(slen == "0")
+		return "";
+
+	m_transport->SendCommand(string("VBS? 'return = ") + property + "'");
+	return Trim(m_transport->ReadReply());
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // DMM mode
+
+int LeCroyOscilloscope::GetMeterDigits()
+{
+	return 5;
+}
 
 bool LeCroyOscilloscope::GetMeterAutoRange()
 {
@@ -1217,46 +1518,30 @@ void LeCroyOscilloscope::StopMeter()
 	m_transport->SendCommand("VBS 'app.acquisition.DVM.DvmEnable = 0'");
 }
 
-double LeCroyOscilloscope::GetVoltage()
+double LeCroyOscilloscope::GetMeterValue()
 {
 	lock_guard<recursive_mutex> lock(m_mutex);
-	m_transport->SendCommand("VBS? 'return = app.acquisition.DVM.Voltage'");
-	string str = m_transport->ReadReply();
-	double ret;
-	sscanf(str.c_str(), "%lf", &ret);
-	return ret;
-}
 
-double LeCroyOscilloscope::GetCurrent()
-{
-	//DMM does not support current
-	return 0;
-}
+	switch(GetMeterMode())
+	{
+		case Multimeter::DC_VOLTAGE:
+			m_transport->SendCommand("VBS? 'return = app.acquisition.DVM.Voltage'");
+			break;
 
-double LeCroyOscilloscope::GetTemperature()
-{
-	//DMM does not support current
-	return 0;
-}
+		case Multimeter::DC_RMS_AMPLITUDE:
+		case Multimeter::AC_RMS_AMPLITUDE:
+			m_transport->SendCommand("VBS? 'return = app.acquisition.DVM.Amplitude'");
+			break;
 
-double LeCroyOscilloscope::GetPeakToPeak()
-{
-	lock_guard<recursive_mutex> lock(m_mutex);
-	m_transport->SendCommand("VBS? 'return = app.acquisition.DVM.Amplitude'");
-	string str = m_transport->ReadReply();
-	double ret;
-	sscanf(str.c_str(), "%lf", &ret);
-	return ret;
-}
+		case Multimeter::FREQUENCY:
+			m_transport->SendCommand("VBS? 'return = app.acquisition.DVM.Frequency'");
+			break;
 
-double LeCroyOscilloscope::GetFrequency()
-{
-	lock_guard<recursive_mutex> lock(m_mutex);
-	m_transport->SendCommand("VBS? 'return = app.acquisition.DVM.Frequency'");
-	string str = m_transport->ReadReply();
-	double ret;
-	sscanf(str.c_str(), "%lf", &ret);
-	return ret;
+		default:
+			return 0;
+	}
+
+	return stod(m_transport->ReadReply());
 }
 
 int LeCroyOscilloscope::GetMeterChannelCount()
@@ -1267,7 +1552,7 @@ int LeCroyOscilloscope::GetMeterChannelCount()
 string LeCroyOscilloscope::GetMeterChannelName(int chan)
 {
 	lock_guard<recursive_mutex> lock(m_mutex);
-	return m_channels[chan]->m_displayname;
+	return m_channels[chan]->GetDisplayName();
 }
 
 int LeCroyOscilloscope::GetCurrentMeterChannel()
@@ -1294,6 +1579,9 @@ void LeCroyOscilloscope::SetCurrentMeterChannel(int chan)
 
 Multimeter::MeasurementTypes LeCroyOscilloscope::GetMeterMode()
 {
+	if(m_meterModeValid)
+		return m_meterMode;
+
 	lock_guard<recursive_mutex> lock(m_mutex);
 	m_transport->SendCommand("VBS? 'return = app.acquisition.DVM.DvmMode'");
 	string str = m_transport->ReadReply();
@@ -1303,23 +1591,28 @@ Multimeter::MeasurementTypes LeCroyOscilloscope::GetMeterMode()
 		str.resize(str.length() - 1);
 
 	if(str == "DC")
-		return Multimeter::DC_VOLTAGE;
+		m_meterMode = Multimeter::DC_VOLTAGE;
 	else if(str == "DC RMS")
-		return Multimeter::DC_RMS_AMPLITUDE;
+		m_meterMode = Multimeter::DC_RMS_AMPLITUDE;
 	else if(str == "ACRMS")
-		return Multimeter::AC_RMS_AMPLITUDE;
+		m_meterMode = Multimeter::AC_RMS_AMPLITUDE;
 	else if(str == "Frequency")
-		return Multimeter::FREQUENCY;
+		m_meterMode = Multimeter::FREQUENCY;
 	else
 	{
 		LogError("Invalid meter mode \"%s\"\n", str.c_str());
-		return Multimeter::DC_VOLTAGE;
+		m_meterMode = Multimeter::DC_VOLTAGE;
 	}
+
+	m_meterModeValid = true;
+	return m_meterMode;
 }
 
 void LeCroyOscilloscope::SetMeterMode(Multimeter::MeasurementTypes type)
 {
-	lock_guard<recursive_mutex> lock(m_mutex);
+	m_meterMode = type;
+	m_meterModeValid = true;
+
 	string stype;
 	switch(type)
 	{
@@ -1348,9 +1641,8 @@ void LeCroyOscilloscope::SetMeterMode(Multimeter::MeasurementTypes type)
 
 	}
 
-	char cmd[128];
-	snprintf(cmd, sizeof(cmd), "VBS 'app.acquisition.DVM.DvmMode = \"%s\"'", stype.c_str());
-	m_transport->SendCommand(cmd);
+	lock_guard<recursive_mutex> lock(m_mutex);
+	m_transport->SendCommand(string("VBS 'app.acquisition.DVM.DvmMode = \"") + stype + "\"");
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1690,6 +1982,9 @@ time_t LeCroyOscilloscope::ExtractTimestamp(unsigned char* wavedesc, double& bas
 		TODO: during startup, query instrument for its current time zone
 		since the wavedesc reports instment local time
 	 */
+	//Yes, this cast is intentional.
+	//It assumes you're on a little endian system using IEEE754 64-bit float, but that applies to everything we support.
+	//cppcheck-suppress invalidPointerCast
 	double fseconds = *reinterpret_cast<const double*>(wavedesc + 296);
 	uint8_t seconds = floor(fseconds);
 	basetime = fseconds - seconds;
@@ -1738,10 +2033,19 @@ vector<WaveformBase*> LeCroyOscilloscope::ProcessAnalogWaveform(
 	auto pdesc = (unsigned char*)(&wavedesc[0]);
 	//uint32_t wavedesc_len = *reinterpret_cast<uint32_t*>(pdesc + 36);
 	//uint32_t usertext_len = *reinterpret_cast<uint32_t*>(pdesc + 40);
+
+	//cppcheck-suppress invalidPointerCast
 	float v_gain = *reinterpret_cast<float*>(pdesc + 156);
+
+	//cppcheck-suppress invalidPointerCast
 	float v_off = *reinterpret_cast<float*>(pdesc + 160);
+
+	//cppcheck-suppress invalidPointerCast
 	float interval = *reinterpret_cast<float*>(pdesc + 176) * 1e12f;
+
+	//cppcheck-suppress invalidPointerCast
 	double h_off = *reinterpret_cast<double*>(pdesc + 180) * 1e12f;	//ps from start of waveform to trigger
+
 	double h_off_frac = fmodf(h_off, interval);						//fractional sample position, in ps
 	if(h_off_frac < 0)
 		h_off_frac = interval + h_off_frac;		//double h_unit = *reinterpret_cast<double*>(pdesc + 244);
@@ -1755,10 +2059,6 @@ vector<WaveformBase*> LeCroyOscilloscope::ProcessAnalogWaveform(
 	size_t num_per_segment = num_samples / num_sequences;
 	int16_t* wdata = (int16_t*)&data[0];
 	int8_t* bdata = (int8_t*)&data[0];
-
-	//Update cache with settings from this trigger
-	m_memoryDepth = num_per_segment;
-	m_memoryDepthValid = true;
 
 	for(size_t j=0; j<num_sequences; j++)
 	{
@@ -2086,7 +2386,9 @@ map<int, DigitalWaveform*> LeCroyOscilloscope::ProcessDigitalWaveform(string& da
 				bool sample = block[base + j];
 
 				//Deduplicate consecutive samples with same value
-				if(last == sample)
+				//FIXME: temporary workaround for rendering bugs
+				//if(last == sample)
+				if( (last == sample) && ((j+3) < num_samples) )
 					cap->m_durations[k] ++;
 
 				//Nope, it toggled - store the new value
@@ -2110,7 +2412,7 @@ map<int, DigitalWaveform*> LeCroyOscilloscope::ProcessDigitalWaveform(string& da
 			//See how much space we saved
 			/*
 			LogDebug("%s: %zu samples deduplicated to %zu (%.1f %%)\n",
-				m_digitalChannels[i]->m_displayname.c_str(),
+				m_digitalChannels[i]->GetDisplayName().c_str(),
 				num_samples,
 				k,
 				(k * 100.0f) / num_samples);
@@ -2440,7 +2742,10 @@ vector<uint64_t> LeCroyOscilloscope::GetSampleRatesNonInterleaved()
 	ret.push_back(500 * k);
 
 	ret.push_back(1 * m);
-	ret.push_back(2 * m);
+	if(m_modelid == MODEL_HDO_9K)		//... with one exception
+		ret.push_back(2500 * k);
+	else
+		ret.push_back(2 * m);
 	ret.push_back(5 * m);
 	ret.push_back(10 * m);
 	ret.push_back(20 * m);
@@ -2615,6 +2920,7 @@ vector<uint64_t> LeCroyOscilloscope::GetSampleDepthsNonInterleaved()
 	ret.push_back(100 * k);
 	ret.push_back(200 * k);
 	ret.push_back(250 * k);
+	ret.push_back(400 * k);
 	ret.push_back(500 * k);
 
 	ret.push_back(1 * m);
@@ -2718,51 +3024,31 @@ vector<uint64_t> LeCroyOscilloscope::GetSampleDepthsNonInterleaved()
 
 vector<uint64_t> LeCroyOscilloscope::GetSampleDepthsInterleaved()
 {
-	const int64_t k = 1000;
-	const int64_t m = k*k;
+	vector<uint64_t> base = GetSampleDepthsNonInterleaved();
 
-	vector<uint64_t> ret = GetSampleDepthsNonInterleaved();
+	//Default to doubling the non-interleaved depths
+	vector<uint64_t> ret;
+	for(auto rate : base)
+		ret.push_back(rate*2);
 
 	switch(m_modelid)
 	{
 		//DDA5 is weird, not a power of two
 		//TODO: XXL option gives 100M, with 48M on all channels
 		case MODEL_DDA_5K:
-			ret.push_back(48 * m);
-			break;
-
 		case MODEL_HDO_4KA:
-			ret.push_back(25 * m);
-			break;
-
-		//no deep-memory option here
 		case MODEL_HDO_9K:
-			ret.push_back(128 * m);
-			break;
+		case MODEL_WAVERUNNER_8K:
+		case MODEL_WAVERUNNER_9K:
+		case MODEL_WAVEPRO_HD:
+			return ret;
 
 		//memory is dedicated per channel, no interleaving possible
 		case MODEL_HDO_6KA:
 		case MODEL_LABMASTER_ZI_A:
 		case MODEL_MDA_800:
 		case MODEL_WAVEMASTER_8ZI_B:
-			break;
-
-		case MODEL_WAVEPRO_HD:
-			if(m_memoryDepthOption == 100)
-				ret.push_back(100 * m);
-			break;
-
-		//TODO: multiple levels of channel combining to deal with?
-		case MODEL_WAVERUNNER_8K_HD:
-			break;
-
-		case MODEL_WAVERUNNER_8K:
-		case MODEL_WAVERUNNER_9K:
-			if(m_memoryDepthOption == 128)
-				ret.push_back(128 * m);
-			else
-				ret.push_back(32 * m);
-			break;
+			return base;
 
 		//TODO: add more models here
 		default:
@@ -2782,12 +3068,17 @@ set<LeCroyOscilloscope::InterleaveConflict> LeCroyOscilloscope::GetInterleaveCon
 	if(m_analogChannelCount > 2)
 		ret.emplace(InterleaveConflict(m_channels[2], m_channels[3]));
 
-	//Waverunner 8 only allows interleaving of 2 and 3.
-	//Any use of 1 or 4 disqualifies interleaving.
-	if(m_modelid == MODEL_WAVERUNNER_8K)
+	switch(m_modelid)
 	{
-		ret.emplace(InterleaveConflict(m_channels[0], m_channels[0]));
-		ret.emplace(InterleaveConflict(m_channels[3], m_channels[3]));
+		//Any use of 1 or 4 disqualifies interleaving in these models
+		case MODEL_HDO_9K:
+		case MODEL_WAVERUNNER_8K:
+			ret.emplace(InterleaveConflict(m_channels[0], m_channels[0]));
+			ret.emplace(InterleaveConflict(m_channels[3], m_channels[3]));
+			break;
+
+		default:
+			break;
 	}
 
 	return ret;
@@ -2814,13 +3105,18 @@ uint64_t LeCroyOscilloscope::GetSampleDepth()
 {
 	if(!m_memoryDepthValid)
 	{
-		lock_guard<recursive_mutex> lock(m_mutex);
-		m_transport->SendCommand("MSIZ?");
-		string reply = m_transport->ReadReply();
-		float size;
-		sscanf(reply.c_str(), "%f", &size);
+		//MSIZ? can sometimes return incorrect values! It returns the *cap* on memory depth,
+		//not the *actual* memory depth.
+		//This is the same as app.Acquisition.Horizontal.MaxSamples, which is also wrong.
 
-		m_memoryDepth = size;
+		//What you see below is the only observed method that seems to reliably get the *actual* memory depth.
+		lock_guard<recursive_mutex> lock(m_mutex);
+		m_transport->SendCommand("VBS? 'return = app.Acquisition.Horizontal.AcquisitionDuration'");
+		string reply = m_transport->ReadReply();
+		int64_t capture_len_ps = Unit(Unit::UNIT_PS).ParseString(reply);
+		int64_t ps_per_sample = 1000000000000L / GetSampleRate();
+
+		m_memoryDepth = capture_len_ps / ps_per_sample;
 		m_memoryDepthValid = true;
 	}
 
@@ -2830,24 +3126,29 @@ uint64_t LeCroyOscilloscope::GetSampleDepth()
 void LeCroyOscilloscope::SetSampleDepth(uint64_t depth)
 {
 	lock_guard<recursive_mutex> lock(m_mutex);
-	char tmp[128];
-	snprintf(tmp, sizeof(tmp), "MSIZ %ld", depth);
-	m_transport->SendCommand(tmp);
-	m_memoryDepth = depth;
+
+	//Calculate the record length we need for this memory depth
+	int64_t ps_per_sample = 1000000000000L / GetSampleRate();
+	int64_t ps_per_acquisition = depth * ps_per_sample;
+	float sec_per_acquisition = ps_per_acquisition * 1e-12;
+	float sec_per_div = sec_per_acquisition / 10;
+
+	m_transport->SendCommand(
+		string("VBS? 'app.Acquisition.Horizontal.HorScale = ") +
+		to_string_sci(sec_per_div) + "'");
+
+	//Sometimes the scope won't set the exact depth we ask for.
+	//Flush the cache to force a read so we know the actual depth we got.
+	m_memoryDepthValid = false;
 }
 
 void LeCroyOscilloscope::SetSampleRate(uint64_t rate)
 {
-	uint64_t ps_per_sample = 1000000000000L / rate;
-	double time_per_sample = ps_per_sample * 1.0e-12;
-	double time_per_plot = time_per_sample * GetSampleDepth();
-	double time_per_div = time_per_plot / 10;
-	m_sampleRate = rate;
-
 	lock_guard<recursive_mutex> lock(m_mutex);
-	char tmp[128];
-	snprintf(tmp, sizeof(tmp), "TDIV %.0e", time_per_div);
-	m_transport->SendCommand(tmp);
+	m_transport->SendCommand(string("VBS? 'app.Acquisition.Horizontal.SampleRate = ") + to_string(rate) + "'");
+
+	m_sampleRate = rate;
+	m_sampleRateValid = true;
 }
 
 void LeCroyOscilloscope::EnableTriggerOutput()
@@ -3149,6 +3450,8 @@ void LeCroyOscilloscope::PullTrigger()
 		PullDropoutTrigger();
 	else if (reply == "Edge")
 		PullEdgeTrigger();
+	else if (reply == "Glitch")
+		PullGlitchTrigger();
 	else if (reply == "Runt")
 		PullRuntTrigger();
 	else if (reply == "SlewRate")
@@ -3254,6 +3557,45 @@ void LeCroyOscilloscope::PullEdgeTrigger()
 	//Slope
 	m_transport->SendCommand("VBS? 'return = app.Acquisition.Trigger.Edge.Slope'");
 	GetTriggerSlope(et, Trim(m_transport->ReadReply()));
+}
+
+/**
+	@brief Reads settings for a glitch trigger from the instrument
+ */
+void LeCroyOscilloscope::PullGlitchTrigger()
+{
+	//Clear out any triggers of the wrong type
+	if( (m_trigger != NULL) && (dynamic_cast<GlitchTrigger*>(m_trigger) != NULL) )
+	{
+		delete m_trigger;
+		m_trigger = NULL;
+	}
+
+	//Create a new trigger if necessary
+	if(m_trigger == NULL)
+		m_trigger = new GlitchTrigger(this);
+	GlitchTrigger* gt = dynamic_cast<GlitchTrigger*>(m_trigger);
+
+	//Level
+	m_transport->SendCommand("VBS? 'return = app.Acquisition.Trigger.Glitch.Level'");
+	gt->SetLevel(stof(m_transport->ReadReply()));
+
+	//Slope
+	m_transport->SendCommand("VBS? 'return = app.Acquisition.Trigger.Glitch.Slope'");
+	GetTriggerSlope(gt, Trim(m_transport->ReadReply()));
+
+	//Condition
+	m_transport->SendCommand("VBS? 'return = app.Acquisition.Trigger.Glitch.Condition'");
+	gt->SetCondition(GetCondition(m_transport->ReadReply()));
+
+	//Min range
+	Unit ps(Unit::UNIT_PS);
+	m_transport->SendCommand("VBS? 'return = app.Acquisition.Trigger.Glitch.TimeLow'");
+	gt->SetLowerBound(ps.ParseString(m_transport->ReadReply()));
+
+	//Max range
+	m_transport->SendCommand("VBS? 'return = app.Acquisition.Trigger.Glitch.TimeHigh'");
+	gt->SetUpperBound(ps.ParseString(m_transport->ReadReply()));
 }
 
 /**
@@ -3584,6 +3926,7 @@ void LeCroyOscilloscope::PushTrigger()
 	//The rest depends on the type
 	auto dt = dynamic_cast<DropoutTrigger*>(m_trigger);
 	auto et = dynamic_cast<EdgeTrigger*>(m_trigger);
+	auto gt = dynamic_cast<GlitchTrigger*>(m_trigger);
 	auto pt = dynamic_cast<PulseWidthTrigger*>(m_trigger);
 	auto rt = dynamic_cast<RuntTrigger*>(m_trigger);
 	auto st = dynamic_cast<SlewRateTrigger*>(m_trigger);
@@ -3594,15 +3937,15 @@ void LeCroyOscilloscope::PushTrigger()
 		m_transport->SendCommand("VBS? 'app.Acquisition.Trigger.Type = \"Dropout\"");
 		PushDropoutTrigger(dt);
 	}
-	else if(pt)	//must be before edge trigger
+	else if(pt)
 	{
 		m_transport->SendCommand("VBS? 'app.Acquisition.Trigger.Type = \"Width\"");
 		PushPulseWidthTrigger(pt);
 	}
-	else if(et)
+	else if(gt)
 	{
-		m_transport->SendCommand("VBS? 'app.Acquisition.Trigger.Type = \"Edge\"");
-		PushEdgeTrigger(et, "app.Acquisition.Trigger.Edge");
+		m_transport->SendCommand("VBS? 'app.Acquisition.Trigger.Type = \"Glitch\"");
+		PushGlitchTrigger(gt);
 	}
 	else if(rt)
 	{
@@ -3623,6 +3966,11 @@ void LeCroyOscilloscope::PushTrigger()
 	{
 		m_transport->SendCommand("VBS? 'app.Acquisition.Trigger.Type = \"Window\"");
 		PushWindowTrigger(wt);
+	}
+	else if(et)	//must be last
+	{
+		m_transport->SendCommand("VBS? 'app.Acquisition.Trigger.Type = \"Edge\"");
+		PushEdgeTrigger(et, "app.Acquisition.Trigger.Edge");
 	}
 
 	else
@@ -3651,7 +3999,7 @@ void LeCroyOscilloscope::PushDropoutTrigger(DropoutTrigger* trig)
 /**
 	@brief Pushes settings for an edge trigger to the instrument
  */
-void LeCroyOscilloscope::PushEdgeTrigger(EdgeTrigger* trig, string tree)
+void LeCroyOscilloscope::PushEdgeTrigger(EdgeTrigger* trig, const string& tree)
 {
 	//Level
 	PushFloat(tree + ".Level", trig->GetLevel());
@@ -3686,6 +4034,17 @@ void LeCroyOscilloscope::PushPulseWidthTrigger(PulseWidthTrigger* trig)
 	PushCondition("app.Acquisition.Trigger.Width.Condition", trig->GetCondition());
 	PushFloat("app.Acquisition.Trigger.Width.TimeHigh", trig->GetUpperBound() * 1e-12f);
 	PushFloat("app.Acquisition.Trigger.Width.TimeLow", trig->GetLowerBound() * 1e-12f);
+}
+
+/**
+	@brief Pushes settings for a glitch trigger to the instrument
+ */
+void LeCroyOscilloscope::PushGlitchTrigger(GlitchTrigger* trig)
+{
+	PushEdgeTrigger(trig, "app.Acquisition.Trigger.Glitch");
+	PushCondition("app.Acquisition.Trigger.Glitch.Condition", trig->GetCondition());
+	PushFloat("app.Acquisition.Trigger.Glitch.TimeHigh", trig->GetUpperBound() * 1e-12f);
+	PushFloat("app.Acquisition.Trigger.Glitch.TimeLow", trig->GetLowerBound() * 1e-12f);
 }
 
 /**
@@ -3825,7 +4184,7 @@ void LeCroyOscilloscope::PushWindowTrigger(WindowTrigger* trig)
 /**
 	@brief Pushes settings for a trigger condition under a .Condition field
  */
-void LeCroyOscilloscope::PushCondition(string path, Trigger::Condition cond)
+void LeCroyOscilloscope::PushCondition(const string& path, Trigger::Condition cond)
 {
 	switch(cond)
 	{
@@ -3854,7 +4213,7 @@ void LeCroyOscilloscope::PushCondition(string path, Trigger::Condition cond)
 /**
 	@brief Pushes settings for a trigger condition under a .PatternOperator field
  */
-void LeCroyOscilloscope::PushPatternCondition(string path, Trigger::Condition cond)
+void LeCroyOscilloscope::PushPatternCondition(const string& path, Trigger::Condition cond)
 {
 	//Note that these enum strings are NOT THE SAME as used by PushCondition()!
 	//For example CONDITION_LESS is "Smaller" vs "LessThan"
@@ -3891,6 +4250,10 @@ void LeCroyOscilloscope::PushPatternCondition(string path, Trigger::Condition co
 		case Trigger::CONDITION_NOT_BETWEEN:
 			m_transport->SendCommand(string("VBS? '") + path + " = \"OutRange\"'");
 			break;
+
+		//CONDITION_ANY not supported by LeCroy scopes
+		default:
+			break;
 	}
 }
 
@@ -3911,6 +4274,7 @@ vector<string> LeCroyOscilloscope::GetTriggerTypes()
 	vector<string> ret;
 	ret.push_back(DropoutTrigger::GetTriggerName());
 	ret.push_back(EdgeTrigger::GetTriggerName());
+	ret.push_back(GlitchTrigger::GetTriggerName());
 	ret.push_back(PulseWidthTrigger::GetTriggerName());
 	ret.push_back(RuntTrigger::GetTriggerName());
 	ret.push_back(SlewRateTrigger::GetTriggerName());

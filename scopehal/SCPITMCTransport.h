@@ -42,14 +42,18 @@
 class SCPITMCTransport : public SCPITransport
 {
 public:
-	SCPITMCTransport(std::string args);
+	SCPITMCTransport(const std::string& args);
 	virtual ~SCPITMCTransport();
+
+	//not copyable or assignable
+	SCPITMCTransport(const SCPITMCTransport&) =delete;
+	SCPITMCTransport& operator=(const SCPITMCTransport&) =delete;
 
 	virtual std::string GetConnectionString();
 	static std::string GetTransportName();
 
-	virtual bool SendCommand(std::string cmd);
-	virtual std::string ReadReply();
+	virtual bool SendCommand(const std::string& cmd);
+	virtual std::string ReadReply(bool endOnSemicolon = true);
 	virtual void ReadRawData(size_t len, unsigned char* buf);
 	virtual void SendRawData(size_t len, const unsigned char* buf);
 
@@ -58,7 +62,7 @@ public:
 
 	TRANSPORT_INITPROC(SCPITMCTransport)
 
-	std::string GetDevicePath()
+	const std::string& GetDevicePath()
 	{ return m_devicePath; }
 
 protected:

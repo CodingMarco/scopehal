@@ -36,7 +36,7 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-I2CEepromDecoder::I2CEepromDecoder(string color)
+I2CEepromDecoder::I2CEepromDecoder(const string& color)
 	: PacketDecoder(OscilloscopeChannel::CHANNEL_TYPE_COMPLEX, color, CAT_MEMORY)
 {
 	CreateInput("i2c");
@@ -302,7 +302,7 @@ void I2CEepromDecoder::Refresh()
 					{
 						cap->m_samples[nlast].m_type = I2CEepromSymbol::TYPE_POLL_BUSY;
 						pack->m_headers["Type"] = "Poll - Busy";
-						pack->m_displayBackgroundColor = m_backgroundColors[COLOR_STATUS];
+						pack->m_displayBackgroundColor = m_backgroundColors[PROTO_COLOR_STATUS];
 						m_packets.push_back(pack);
 						pack = NULL;
 						state = 0;
@@ -330,7 +330,7 @@ void I2CEepromDecoder::Refresh()
 				{
 					cap->m_samples[ntype].m_type = I2CEepromSymbol::TYPE_POLL_OK;
 					pack->m_headers["Type"] = "Poll - OK";
-					pack->m_displayBackgroundColor = m_backgroundColors[COLOR_STATUS];
+					pack->m_displayBackgroundColor = m_backgroundColors[PROTO_COLOR_STATUS];
 					m_packets.push_back(pack);
 					pack = NULL;
 					state = 0;
@@ -392,7 +392,7 @@ void I2CEepromDecoder::Refresh()
 					cap->m_samples[ntype].m_type = I2CEepromSymbol::TYPE_SELECT_READ;
 					state = 6;
 					pack->m_headers["Type"] = "Read";
-					pack->m_displayBackgroundColor = m_backgroundColors[COLOR_DATA_READ];
+					pack->m_displayBackgroundColor = m_backgroundColors[PROTO_COLOR_DATA_READ];
 				}
 				else if(s.m_stype == I2CSymbol::TYPE_DATA)
 				{
@@ -402,13 +402,16 @@ void I2CEepromDecoder::Refresh()
 					cap->m_samples.push_back(I2CEepromSymbol(I2CEepromSymbol::TYPE_DATA, s.m_data));
 					tstart = end;
 
+					//Save the data byte
+					pack->m_data.push_back(s.m_data);
+
 					//Expect an ACK right after.
 					state = 9;
 
 					//Update type of the transaction
 					cap->m_samples[ntype].m_type = I2CEepromSymbol::TYPE_SELECT_WRITE;
 					pack->m_headers["Type"] = "Write";
-					pack->m_displayBackgroundColor = m_backgroundColors[COLOR_DATA_WRITE];
+					pack->m_displayBackgroundColor = m_backgroundColors[PROTO_COLOR_DATA_WRITE];
 				}
 				else
 					state = 0;
@@ -599,16 +602,16 @@ string I2CEepromDecoder::GetText(int i)
 	return string(tmp);
 }
 
-bool I2CEepromDecoder::CanMerge(Packet* a, Packet* b)
+bool I2CEepromDecoder::CanMerge(Packet* first, Packet* /*cur*/, Packet* next)
 {
 	//Merge polling packets
-	if( (a->m_headers["Type"].find("Poll") == 0) && (b->m_headers["Type"].find("Poll") == 0 ) )
+	if( (first->m_headers["Type"].find("Poll") == 0) && (next->m_headers["Type"].find("Poll") == 0 ) )
 		return true;
 
 	return false;
 }
 
-Packet* I2CEepromDecoder::CreateMergedHeader(Packet* pack)
+Packet* I2CEepromDecoder::CreateMergedHeader(Packet* pack, size_t /*i*/)
 {
 	if(pack->m_headers["Type"].find("Poll")  == 0)
 	{
@@ -616,7 +619,7 @@ Packet* I2CEepromDecoder::CreateMergedHeader(Packet* pack)
 		ret->m_offset = pack->m_offset;
 		ret->m_len = pack->m_len;				//TODO: extend?
 		ret->m_headers["Type"] = "Poll";
-		ret->m_displayBackgroundColor = m_backgroundColors[COLOR_STATUS];
+		ret->m_displayBackgroundColor = m_backgroundColors[PROTO_COLOR_STATUS];
 
 		//TODO: add other fields?
 		return ret;

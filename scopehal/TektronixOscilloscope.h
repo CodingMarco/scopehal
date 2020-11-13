@@ -31,6 +31,11 @@
 #define TektronixOscilloscope_h
 
 class EdgeTrigger;
+class PulseWidthTrigger;
+class DropoutTrigger;
+class RuntTrigger;
+class SlewRateTrigger;
+class WindowTrigger;
 
 /**
 	@brief Driver for Tektronix oscilloscopes
@@ -52,11 +57,17 @@ class EdgeTrigger;
 	ALLEV?
 		Prints the error log in a somewhat confusing and not-human-readable format
  */
-class TektronixOscilloscope : public SCPIOscilloscope
+class TektronixOscilloscope
+	: public SCPIOscilloscope
+	, public Multimeter
 {
 public:
 	TektronixOscilloscope(SCPITransport* transport);
 	virtual ~TektronixOscilloscope();
+
+	//not copyable or assignable
+	TektronixOscilloscope(const TektronixOscilloscope& rhs) =delete;
+	TektronixOscilloscope& operator=(const TektronixOscilloscope& rhs) =delete;
 
 public:
 
@@ -68,6 +79,7 @@ public:
 	//Channel configuration
 	virtual bool IsChannelEnabled(size_t i);
 	virtual void EnableChannel(size_t i);
+	virtual bool CanEnableChannel(size_t i);
 	virtual void DisableChannel(size_t i);
 	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i);
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type);
@@ -80,6 +92,9 @@ public:
 	virtual OscilloscopeChannel* GetExternalTrigger();
 	virtual double GetChannelOffset(size_t i);
 	virtual void SetChannelOffset(size_t i, double offset);
+	virtual std::string GetChannelDisplayName(size_t i);
+	virtual void SetChannelDisplayName(size_t i, std::string name);
+	virtual std::vector<unsigned int> GetChannelBandwidthLimiters(size_t i);
 
 	//Triggering
 	virtual Oscilloscope::TriggerMode PollTrigger();
@@ -90,6 +105,7 @@ public:
 	virtual bool IsTriggerArmed();
 	virtual void PushTrigger();
 	virtual void PullTrigger();
+	std::vector<std::string> GetTriggerTypes();
 
 	virtual std::vector<uint64_t> GetSampleRatesNonInterleaved();
 	virtual std::vector<uint64_t> GetSampleRatesInterleaved();
@@ -120,6 +136,34 @@ public:
 	virtual void SetDigitalHysteresis(size_t channel, float level);
 	virtual void SetDigitalThreshold(size_t channel, float level);
 
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Multimeter stuff
+
+	virtual unsigned int GetMeasurementTypes();
+	virtual int GetMeterChannelCount();
+	virtual std::string GetMeterChannelName(int chan);
+	virtual int GetCurrentMeterChannel();
+	virtual void SetCurrentMeterChannel(int chan);
+	virtual MeasurementTypes GetMeterMode();
+	virtual void SetMeterMode(MeasurementTypes type);
+	virtual void SetMeterAutoRange(bool enable);
+	virtual bool GetMeterAutoRange();
+	virtual void StartMeter();
+	virtual void StopMeter();
+	virtual double GetMeterValue();
+	virtual int GetMeterDigits();
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Spectrum analyzer configuration
+
+	virtual bool HasFrequencyControls();
+	virtual void SetSpan(int64_t span);
+	virtual int64_t GetSpan();
+	virtual void SetCenterFrequency(size_t channel, int64_t freq);
+	virtual int64_t GetCenterFrequency(size_t channel);
+	virtual void SetResolutionBandwidth(int64_t rbw);
+	virtual int64_t GetResolutionBandwidth();
+
 protected:
 	OscilloscopeChannel* m_extTrigChannel;
 
@@ -137,6 +181,7 @@ protected:
 	enum ProbeType
 	{
 		PROBE_TYPE_ANALOG,
+		PROBE_TYPE_ANALOG_250K,
 		PROBE_TYPE_DIGITAL_8BIT
 	};
 
@@ -157,6 +202,14 @@ protected:
 	int64_t m_triggerOffset;
 	std::map<size_t, int64_t> m_channelDeskew;
 	std::map<size_t, ProbeType> m_probeTypes;
+	bool m_rbwValid;
+	int64_t m_rbw;
+	bool m_dmmAutorangeValid;
+	bool m_dmmAutorange;
+	bool m_dmmChannelValid;
+	int m_dmmChannel;
+	bool m_dmmModeValid;
+	Multimeter::MeasurementTypes m_dmmMode;
 
 	///The analog channel for each flex channel
 	std::map<OscilloscopeChannel*, size_t> m_flexChannelParents;
@@ -172,6 +225,16 @@ protected:
 
 	void PullEdgeTrigger();
 	void PushEdgeTrigger(EdgeTrigger* trig);
+	void PullPulseWidthTrigger();
+	void PushPulseWidthTrigger(PulseWidthTrigger* trig);
+	void PullDropoutTrigger();
+	void PushDropoutTrigger(DropoutTrigger* trig);
+	void PullRuntTrigger();
+	void PushRuntTrigger(RuntTrigger* trig);
+	void PullSlewRateTrigger();
+	void PushSlewRateTrigger(SlewRateTrigger* trig);
+	void PullWindowTrigger();
+	void PushWindowTrigger(WindowTrigger* trig);
 
 	//Helpers for figuring out type of a channel by the index
 	bool IsAnalog(size_t index)
@@ -195,8 +258,8 @@ protected:
 		return true;
 	}
 
-	//available instrument bandwidth in MHz
-	int m_bandwidth;
+	///Maximum bandwidth we support, in MHz
+	unsigned int m_maxBandwidth;
 
 	enum Family
 	{
@@ -204,6 +267,9 @@ protected:
 		FAMILY_MSO6,
 		FAMILY_UNKNOWN
 	} m_family;
+
+	//Installed software options
+	bool m_hasDVM;
 
 public:
 	static std::string GetDriverNameInternal();

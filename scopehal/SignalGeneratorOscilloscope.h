@@ -89,7 +89,6 @@ public:
 	virtual unsigned int GetInstrumentTypes();
 
 protected:
-	void ArmTrigger();
 
 	OscilloscopeChannel* m_extTrigger;
 
@@ -105,6 +104,9 @@ protected:
 
 	bool m_triggerArmed;
 	bool m_triggerOneShot;
+
+	size_t m_depth;
+	size_t m_rate;
 
 public:
 	static std::string GetDriverNameInternal();

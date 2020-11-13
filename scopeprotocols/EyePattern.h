@@ -44,6 +44,10 @@ public:
 	EyeWaveform(size_t width, size_t height, float center);
 	virtual ~EyeWaveform();
 
+	//not copyable or assignable
+	EyeWaveform(const EyeWaveform&) =delete;
+	EyeWaveform& operator=(const EyeWaveform&) =delete;
+
 	float* GetData()
 	{ return m_outdata; }
 
@@ -96,7 +100,7 @@ protected:
 class EyePattern : public Filter
 {
 public:
-	EyePattern(std::string color);
+	EyePattern(const std::string& color);
 
 	virtual void Refresh();
 
@@ -112,6 +116,9 @@ public:
 	virtual double GetOffset();
 
 	virtual void ClearSweeps();
+
+	void RecalculateUIWidth();
+	EyeWaveform* ReallocateWaveform();
 
 	void SetWidth(size_t width)
 	{
@@ -144,6 +151,25 @@ public:
 	const EyeMask& GetMask() const
 	{ return m_mask; }
 
+	enum ClockPolarity
+	{
+		CLOCK_RISING	= 1,
+		CLOCK_FALLING	= 2,
+		CLOCK_BOTH 		= 3	//CLOCK_RISING | CLOCK_FALLING
+	};
+
+	enum RangeMode
+	{
+		RANGE_AUTO		= 0,
+		RANGE_FIXED		= 1
+	};
+
+	enum ClockAlignment
+	{
+		ALIGN_CENTER,
+		ALIGN_EDGE
+	};
+
 	PROTOCOL_DECODER_INITPROC(EyePattern)
 
 protected:
@@ -154,10 +180,15 @@ protected:
 
 	int64_t m_xoff;
 	float m_xscale;
+	ClockAlignment m_lastClockAlign;
 
 	std::string m_saturationName;
 	std::string m_centerName;
 	std::string m_maskName;
+	std::string m_polarityName;
+	std::string m_vmodeName;
+	std::string m_rangeName;
+	std::string m_clockAlignName;
 
 	EyeMask m_mask;
 };

@@ -41,7 +41,7 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-TMDSDecoder::TMDSDecoder(string color)
+TMDSDecoder::TMDSDecoder(const string& color)
 	: Filter(OscilloscopeChannel::CHANNEL_TYPE_COMPLEX, color, CAT_SERIAL)
 {
 	//Set up channels
@@ -228,7 +228,7 @@ void TMDSDecoder::Refresh()
 				cap->m_offsets.push_back(sampdata.m_offsets[i]);
 				cap->m_durations.push_back(sampdata.m_offsets[i+10] - sampdata.m_offsets[i]);
 				cap->m_samples.push_back(TMDSSymbol(TMDSSymbol::TMDS_TYPE_GUARD, 0));
-				last_symbol_type = TYPE_GUARD;
+				//last_symbol_type = TYPE_GUARD;
 				break;
 			}
 		}

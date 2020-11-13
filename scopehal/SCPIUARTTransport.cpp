@@ -40,7 +40,7 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-SCPIUARTTransport::SCPIUARTTransport(string args)
+SCPIUARTTransport::SCPIUARTTransport(const string& args)
 {
 	char devfile[128];
 	unsigned int baudrate = 0;
@@ -90,14 +90,14 @@ string SCPIUARTTransport::GetConnectionString()
 	return string(tmp);
 }
 
-bool SCPIUARTTransport::SendCommand(string cmd)
+bool SCPIUARTTransport::SendCommand(const string& cmd)
 {
 	LogTrace("Sending %s\n", cmd.c_str());
 	string tempbuf = cmd + "\n";
 	return m_uart.Write((unsigned char*)tempbuf.c_str(), tempbuf.length());
 }
 
-string SCPIUARTTransport::ReadReply()
+string SCPIUARTTransport::ReadReply(bool endOnSemicolon)
 {
 	//FIXME: there *has* to be a more efficient way to do this...
 	// (see the same code in Socket)
@@ -107,7 +107,7 @@ string SCPIUARTTransport::ReadReply()
 	{
 		if(!m_uart.Read((unsigned char*)&tmp, 1))
 			break;
-		if( (tmp == '\n') || (tmp == ';') )
+		if( (tmp == '\n') || ( (tmp == ';') && endOnSemicolon ) )
 			break;
 		else
 			ret += tmp;

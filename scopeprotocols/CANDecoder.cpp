@@ -12,23 +12,15 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-CANDecoder::CANDecoder(string color)
-	: Filter(OscilloscopeChannel::CHANNEL_TYPE_COMPLEX, color, CAT_BUS)
+CANDecoder::CANDecoder(const string& color)
+	: PacketDecoder(OscilloscopeChannel::CHANNEL_TYPE_COMPLEX, color, CAT_BUS)
+	, m_baudrateName("Bit Rate")
 {
 	//Set up channels
-	CreateInput("din");
+	CreateInput("CANH");
 
-	m_tq = "Time Quantum";
-	m_parameters[m_tq] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_PS));
-	m_parameters[m_tq].SetIntVal(156000);
-
-	m_bs1 = "Bit Segment 1 [tq]";
-	m_parameters[m_bs1] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_COUNTS));
-	m_parameters[m_bs1].SetIntVal(7);
-
-	m_bs2 = "Bit Segment 2 [tq]";
-	m_parameters[m_bs2] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_COUNTS));
-	m_parameters[m_bs2].SetIntVal(5);
+	m_parameters[m_baudrateName] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_BITRATE));
+	m_parameters[m_baudrateName].SetIntVal(250000);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -68,6 +60,8 @@ void CANDecoder::SetDefaultName()
 
 void CANDecoder::Refresh()
 {
+	ClearPackets();
+
 	//Make sure we've got valid inputs
 	if(!VerifyAllInputsOK())
 	{
@@ -84,193 +78,418 @@ void CANDecoder::Refresh()
 	cap->m_startTimestamp = diff->m_startTimestamp;
 	cap->m_startPicoseconds = diff->m_startPicoseconds;
 
-	//Loop over the data and look for transactions
-	//For now, assume equal sample rate
-	bool last_diff = true;
-	bool cur_diff = true;
-	size_t symbol_start = 0;
-	size_t bit_start = 0;
-	CANSymbol::stype current_symbol = CANSymbol::TYPE_IDLE;
-	uint32_t current_data = 0;
-	uint8_t bitcount = 0;
-	uint8_t dlc = 0;
-	uint8_t stuff = 0;
+	//Calculate some time scale values
+	//Sample point is 3/4 of the way through the UI
+	auto bitrate = m_parameters[m_baudrateName].GetIntVal();
+	int64_t ps_per_ui = 1e12 / bitrate;
+	int64_t samples_per_ui = ps_per_ui / diff->m_timescale;
 
-	// Sync_seg + bs1 + bs2
-	m_nbt = m_parameters[m_tq].GetIntVal() * ( 1 + m_parameters[m_bs1].GetIntVal() + m_parameters[m_bs2].GetIntVal() );
+	enum
+	{
+		STATE_WAIT_FOR_IDLE,
+		STATE_IDLE,
+		STATE_SOF,
+		STATE_ID,
+		STATE_EXT_ID,
+		STATE_RTR,
+		STATE_IDE,
+		STATE_FD,
+		STATE_R0,
+		STATE_DLC,
+		STATE_DATA,
+		STATE_CRC,
+
+		STATE_CRC_DELIM,
+		STATE_ACK,
+		STATE_ACK_DELIM,
+		STATE_EOF
+	} state = STATE_WAIT_FOR_IDLE;
+
+	//LogDebug("Starting CAN decode\n");
+	//LogIndenter li;
+
+	Packet* pack = NULL;
 
 	size_t len = diff->m_samples.size();
-	int delta1 = ((2 * m_parameters[m_bs1].GetIntVal() + 1) * m_parameters[m_tq].GetIntVal() / 2);
+	int64_t tbitstart = 0;
+	int64_t tblockstart = 0;
+	bool vlast = true;
+	int nbit = 0;
+	bool sampled = false;
+	bool sampled_value = false;
+	bool last_sampled_value = false;
+	int bits_since_toggle = 0;
+	uint32_t current_field = 0;
+	bool frame_is_rtr = false;
+	bool extended_id = false;
+	bool fd_mode = false;
+	int frame_bytes_left = 0;
+	int32_t frame_id = 0;
+	char tmp[128];
 	for(size_t i = 0; i < len; i++)
 	{
-		if (symbol_start != 0 && current_symbol == CANSymbol::TYPE_SOF &&
-		    ((diff->m_offsets[i] - diff->m_offsets[bit_start] + 1) * diff->m_timescale) < delta1)
+		bool v = diff->m_samples[i];
+		bool toggle = (v != vlast);
+		vlast = v;
+
+		auto off = diff->m_offsets[i];
+		auto end = diff->m_durations[i] + off;
+
+		auto current_bitlen = off - tbitstart;
+
+		//When starting up, wait until we have at least 7 UIs idle in a row
+		if(state == STATE_WAIT_FOR_IDLE)
 		{
-			// We wait for the next bit
+			if(v)
+				tblockstart = off;
+			else
+			{
+				if( (off - tblockstart) >= (7 * samples_per_ui) )
+					state = STATE_IDLE;
+			}
+		}
+
+		//If we're idle, begin the SOF as soon as we hit a dominant state
+		if(state == STATE_IDLE)
+		{
+			if(v)
+			{
+				tblockstart = off;
+				tbitstart = off;
+				nbit = 0;
+				bits_since_toggle = 0;
+				state = STATE_SOF;
+			}
 			continue;
 		}
 
-		else if (symbol_start != 0 && current_symbol != CANSymbol::TYPE_SOF &&
-		    ((diff->m_offsets[i] - diff->m_offsets[bit_start] + 1) * diff->m_timescale) < m_nbt)
-		{
-			// We wait for the next bit
+		//Ignore all transitions for the first half of the unit interval
+		//TODO: resync if we get one in the very early period
+		if(current_bitlen < samples_per_ui/2)
 			continue;
+
+		//When we hit 3/4 of a UI, sample the bit value.
+		//Invert the sampled value since CAN uses negative logic
+		if( (current_bitlen >= 3 * samples_per_ui / 4) && !sampled )
+		{
+			last_sampled_value = sampled_value;
+			sampled = true;
+			sampled_value = !v;
 		}
 
-		cur_diff = diff->m_samples[i];
-		bit_start = i;
-
-		if (current_symbol != CANSymbol::TYPE_IDLE)
+		//Lock in a bit when either the UI ends, or we see a transition
+		if(toggle || (current_bitlen >= samples_per_ui) )
 		{
-			if (stuff == 5)
+			/*
+			LogDebug("Bit ended at %s (bits_since_toggle = %d, sampled_value = %d, last_sampled_value = %d)\n",
+				Unit(Unit::UNIT_PS).PrettyPrint(off * diff->m_timescale).c_str(), bits_since_toggle,
+				sampled_value, last_sampled_value);
+			*/
+
+			if(sampled_value == last_sampled_value)
+				bits_since_toggle ++;
+
+			//Don't look for stuff bits at the end of the frame
+			else if(state >= STATE_ACK)
+			{}
+
+			//Discard stuff bits
+			else
 			{
-				// Ignore bit
-				stuff = 1;
-				last_diff = cur_diff;
-				continue;
-			} else if (cur_diff == last_diff || stuff == 0) {
-				stuff++;
-			} else {
-				stuff = 1;
-			}
-		}
-
-		// First bit
-		if (current_symbol == CANSymbol::TYPE_IDLE && cur_diff && !last_diff)
-		{
-			symbol_start = i;
-			current_symbol = CANSymbol::TYPE_SOF;
-			stuff = 1;
-		}
-		else if (current_symbol == CANSymbol::TYPE_SOF)
-		{
-			cap->m_offsets.push_back(diff->m_offsets[symbol_start]);
-			cap->m_durations.push_back(diff->m_offsets[i] - symbol_start);
-			cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_SOF, NULL, 0));
-
-			current_symbol = CANSymbol::TYPE_SID;
-			symbol_start = i;
-		}
-		else if (current_symbol == CANSymbol::TYPE_SID)
-		{
-			current_data <<= 1;
-			current_data |= (cur_diff)?0:1;
-			bitcount++;
-
-			if (bitcount == 11) // SID
-			{
-				cap->m_offsets.push_back(diff->m_offsets[symbol_start]);
-				cap->m_durations.push_back(diff->m_offsets[i] - symbol_start);
-				cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_SID, (uint8_t*)&current_data, 2));
-
-				bitcount = 0;
-				current_data = 0;
-				symbol_start = i;
-				current_symbol = CANSymbol::TYPE_RTR;
-			}
-		}
-		else if (current_symbol == CANSymbol::TYPE_RTR)
-		{
-			current_data |= (cur_diff)?0:1;
-
-			cap->m_offsets.push_back(diff->m_offsets[symbol_start]);
-			cap->m_durations.push_back(diff->m_offsets[i] - symbol_start);
-			cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_RTR, (uint8_t *)&current_data, 1));
-
-			current_data = 0;
-			symbol_start = i;
-			current_symbol = CANSymbol::TYPE_IDE;
-		}
-		else if (current_symbol == CANSymbol::TYPE_IDE)
-		{
-			current_data |= (cur_diff)?0:1;
-
-			cap->m_offsets.push_back(diff->m_offsets[symbol_start]);
-			cap->m_durations.push_back(diff->m_offsets[i] - symbol_start);
-			cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_IDE, (uint8_t *)&current_data, 1));
-
-			current_data = 0;
-			symbol_start = i;
-			current_symbol = CANSymbol::TYPE_R0;
-		}
-		else if (current_symbol == CANSymbol::TYPE_R0)
-		{
-			current_data |= (cur_diff)?0:1;
-
-			cap->m_offsets.push_back(diff->m_offsets[symbol_start]);
-			cap->m_durations.push_back(diff->m_offsets[i] - symbol_start);
-			cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_R0, (uint8_t *)&current_data, 1));
-
-			current_data = 0;
-			symbol_start = i;
-			current_symbol = CANSymbol::TYPE_DLC;
-		}
-		else if (current_symbol == CANSymbol::TYPE_DLC)
-		{
-			bitcount++;
-			current_data <<= 1;
-			current_data |= (cur_diff)?0:1;
-
-			if (bitcount == 4)
-			{
-				cap->m_offsets.push_back(diff->m_offsets[symbol_start]);
-				cap->m_durations.push_back(diff->m_offsets[i] - symbol_start);
-				cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_DLC, (uint8_t*)&current_data, 1));
-
-				dlc = current_data;
-				bitcount = 0;
-				current_data = 0;
-				symbol_start = i;
-				current_symbol = CANSymbol::TYPE_DATA;
-			}
-		}
-		else if (current_symbol == CANSymbol::TYPE_DATA)
-		{
-			bitcount++;
-			current_data <<= 1;
-			current_data |= (cur_diff)?0:1;
-
-			if (bitcount == 8)
-			{
-				cap->m_offsets.push_back(diff->m_offsets[symbol_start]);
-				cap->m_durations.push_back(diff->m_offsets[i] - symbol_start);
-				cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_DATA, (uint8_t*)&current_data, 1));
-
-				bitcount = 0;
-				current_data = 0;
-				symbol_start = i;
-				--dlc;
-				if (0 == dlc)
+				if(bits_since_toggle == 5)
 				{
-					current_symbol = CANSymbol::TYPE_CRC;
+					//LogDebug("Discarding stuff bit at %s (bits_since_toggle = %d)\n",
+					//	Unit(Unit::UNIT_PS).PrettyPrint(off * diff->m_timescale).c_str(), bits_since_toggle);
+
+					tbitstart = off;
+					sampled = false;
+					bits_since_toggle = 1;
+					continue;
 				}
 				else
-				{
-					current_symbol = CANSymbol::TYPE_DATA;
-				}
+					bits_since_toggle = 1;
 			}
-		}
-		else if (current_symbol == CANSymbol::TYPE_CRC)
-		{
-			bitcount++;
-			current_data <<= 1;
-			current_data |= (cur_diff)?0:1;
 
-			if (bitcount == 15)
+			//TODO: Detect and report an error if we see six consecutive bits with the same polarity
+
+			//Read data bits
+			current_field <<= 1;
+			if(sampled_value)
+				current_field |= 1;
+			nbit ++;
+
+			switch(state)
 			{
-				cap->m_offsets.push_back(diff->m_offsets[symbol_start]);
-				cap->m_durations.push_back(diff->m_offsets[i] - symbol_start);
-				cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_CRC, (uint8_t*)&current_data, 2));
+				//Wait for at least 7 bit times low
+				case STATE_WAIT_FOR_IDLE:
+					break;
 
-				bitcount = 0;
-				current_data = 0;
-				symbol_start = 0;
-				current_symbol = CANSymbol::TYPE_IDLE;
+				case STATE_IDLE:
+					break;
+
+				//SOF bit is over
+				case STATE_SOF:
+
+					//Start a new packet
+					pack = new Packet;
+					pack->m_offset = off * diff->m_timescale;
+					pack->m_len = 0;
+					m_packets.push_back(pack);
+
+					cap->m_offsets.push_back(tblockstart);
+					cap->m_durations.push_back(off - tblockstart);
+					cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_SOF, 0));
+
+					extended_id = false;
+					fd_mode = false;
+
+					tblockstart = off;
+					nbit = 0;
+					current_field = 0;
+					state = STATE_ID;
+					break;
+
+				//Read the ID (MSB first)
+				case STATE_ID:
+
+					//When we've read 11 bits, the ID is over
+					if(nbit == 11)
+					{
+						cap->m_offsets.push_back(tblockstart);
+						cap->m_durations.push_back(end - tblockstart);
+						cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_ID, current_field));
+
+						state = STATE_RTR;
+
+						frame_id = current_field;
+
+						snprintf(tmp, sizeof(tmp), "%03x", frame_id);
+						pack->m_headers["ID"] = tmp;
+						pack->m_headers["Format"] = "Base";
+						pack->m_headers["Mode"] = "CAN";
+						pack->m_headers["Type"] = "Data";
+					}
+
+					break;
+
+				//Remote transmission request
+				case STATE_RTR:
+					frame_is_rtr = sampled_value;
+
+					cap->m_offsets.push_back(tbitstart);
+					cap->m_durations.push_back(end - tbitstart);
+					cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_RTR, frame_is_rtr));
+
+					if(frame_is_rtr)
+						pack->m_headers["Type"] = "RTR";
+
+					if(extended_id)
+						state = STATE_FD;
+					else
+						state = STATE_IDE;
+
+					break;
+
+				//Identifier extension
+				case STATE_IDE:
+					extended_id = sampled_value;
+
+					if(extended_id)
+					{
+						//Delete the old ID and SRR
+						for(int n=0; n<2; n++)
+						{
+							cap->m_offsets.pop_back();
+							cap->m_durations.pop_back();
+							cap->m_samples.pop_back();
+						}
+
+						nbit = 0;
+						current_field = 0;
+						state = STATE_EXT_ID;
+					}
+
+					else
+						state = STATE_R0;
+
+					break;
+
+				//Full ID
+				case STATE_EXT_ID:
+
+					//Read the other 18 bits of the ID
+					if(nbit == 18)
+					{
+						frame_id = (frame_id << 18) | current_field;
+
+						cap->m_offsets.push_back(tblockstart);
+						cap->m_durations.push_back(end - tblockstart);
+						cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_ID, frame_id));
+
+						snprintf(tmp, sizeof(tmp), "%08x", frame_id);
+						pack->m_headers["ID"] = tmp;
+						pack->m_headers["Format"] = "Ext";
+
+						state = STATE_RTR;
+					}
+
+					break;
+
+				//Reserved bit (should always be zero)
+				case STATE_R0:
+					cap->m_offsets.push_back(tbitstart);
+					cap->m_durations.push_back(end - tbitstart);
+					cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_R0, sampled_value));
+
+					state = STATE_DLC;
+					tblockstart = off;
+					nbit = 0;
+					current_field = 0;
+					break;
+
+				//FD mode (currently ignored)
+				case STATE_FD:
+					cap->m_offsets.push_back(tbitstart);
+					cap->m_durations.push_back(end - tbitstart);
+					cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_FD, sampled_value));
+
+					fd_mode = sampled_value;
+					if(fd_mode)
+						pack->m_headers["Mode"] = "CAN-FD";
+
+					state = STATE_R0;
+					break;
+
+				//Data length code (4 bits)
+				case STATE_DLC:
+
+					//When we've read 4 bits, the DLC is over
+					if(nbit == 4)
+					{
+						cap->m_offsets.push_back(tblockstart);
+						cap->m_durations.push_back(end - tblockstart);
+						cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_DLC, current_field));
+
+						frame_bytes_left = current_field;
+
+						//Skip data if DLC=0, or if this is a read request
+						if( (frame_bytes_left == 0) || frame_is_rtr)
+							state = STATE_CRC;
+						else
+							state = STATE_DATA;
+
+						tblockstart = end;
+						nbit = 0;
+						current_field = 0;
+					}
+
+					break;
+
+				//Read frame data
+				case STATE_DATA:
+
+					//Data is in 8-bit bytes
+					if(nbit == 8)
+					{
+						cap->m_offsets.push_back(tblockstart);
+						cap->m_durations.push_back(end - tblockstart);
+						cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_DATA, current_field));
+
+						pack->m_data.push_back(current_field);
+
+						//Go to CRC after we've read all the data
+						frame_bytes_left --;
+						if(frame_bytes_left == 0)
+							state = STATE_CRC;
+
+						//Reset for the next byte
+						tblockstart = end;
+						nbit = 0;
+						current_field = 0;
+					}
+
+					break;
+
+				//Read CRC value
+				case STATE_CRC:
+
+					//CRC is 15 bits long
+					if(nbit == 15)
+					{
+						//TODO: actually check the CRC
+						cap->m_offsets.push_back(tblockstart);
+						cap->m_durations.push_back(end - tblockstart);
+						cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_CRC_OK, current_field));
+
+						state = STATE_CRC_DELIM;
+					}
+
+					break;
+
+				//CRC delimiter
+				case STATE_CRC_DELIM:
+					cap->m_offsets.push_back(tbitstart);
+					cap->m_durations.push_back(end - tbitstart);
+					cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_CRC_DELIM, sampled_value));
+
+					state = STATE_ACK;
+					break;
+
+				//ACK bit
+				case STATE_ACK:
+					cap->m_offsets.push_back(tbitstart);
+					cap->m_durations.push_back(end - tbitstart);
+					cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_ACK, sampled_value));
+
+					if(sampled_value)
+						pack->m_headers["Ack"] = "NAK";
+					else
+						pack->m_headers["Ack"] = "ACK";
+
+					state = STATE_ACK_DELIM;
+					break;
+
+				//ACK delimiter
+				case STATE_ACK_DELIM:
+					cap->m_offsets.push_back(tbitstart);
+					cap->m_durations.push_back(end - tbitstart);
+					cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_ACK_DELIM, sampled_value));
+
+					state = STATE_EOF;
+					tblockstart = end;
+					nbit = 0;
+					current_field = 0;
+					break;
+
+				//Read EOF
+				case STATE_EOF:
+
+					//EOF is 7 bits long
+					if(nbit == 7)
+					{
+						if(frame_is_rtr)
+							snprintf(tmp, sizeof(tmp), "%d", (int)frame_bytes_left);
+						else
+							snprintf(tmp, sizeof(tmp), "%d", (int)pack->m_data.size());
+						pack->m_headers["Len"] = tmp;
+
+						cap->m_offsets.push_back(tblockstart);
+						cap->m_durations.push_back(end - tblockstart);
+						cap->m_samples.push_back(CANSymbol(CANSymbol::TYPE_EOF, current_field));
+
+						state = STATE_IDLE;
+					}
+
+					break;
+
+				default:
+					break;
 			}
-		}
 
-		//Save old state
-		last_diff = cur_diff;
+			//Start the next bit
+			tbitstart = off;
+			sampled = false;
+		}
 	}
 
 	SetData(cap, 0);
@@ -283,24 +502,54 @@ Gdk::Color CANDecoder::GetColor(int i)
 	{
 		const CANSymbol& s = capture->m_samples[i];
 
-		if(s.m_stype == CANSymbol::TYPE_SOF)
-			return m_standardColors[COLOR_CONTROL];
-		else if(s.m_stype == CANSymbol::TYPE_SID)
-			return m_standardColors[COLOR_ADDRESS];
-		else if(s.m_stype == CANSymbol::TYPE_RTR)
-			return m_standardColors[COLOR_CONTROL];
-		else if(s.m_stype == CANSymbol::TYPE_IDE)
-			return m_standardColors[COLOR_CONTROL];
-		else if(s.m_stype == CANSymbol::TYPE_R0)
-			return m_standardColors[COLOR_CONTROL];
-		else if(s.m_stype == CANSymbol::TYPE_DLC)
-			return m_standardColors[COLOR_CONTROL];
-		else if(s.m_stype == CANSymbol::TYPE_DATA)
-			return m_standardColors[COLOR_DATA];
-		else if(s.m_stype == CANSymbol::TYPE_CRC)
-			return m_standardColors[COLOR_CHECKSUM_OK];
-		else
-			return m_standardColors[COLOR_IDLE];
+		switch(s.m_stype)
+		{
+			case CANSymbol::TYPE_SOF:
+				return m_standardColors[COLOR_PREAMBLE];
+
+			case CANSymbol::TYPE_R0:
+				if(!s.m_data)
+					return m_standardColors[COLOR_PREAMBLE];
+				else
+					return m_standardColors[COLOR_ERROR];
+
+			case CANSymbol::TYPE_ID:
+				return m_standardColors[COLOR_ADDRESS];
+
+			case CANSymbol::TYPE_RTR:
+			case CANSymbol::TYPE_FD:
+				return m_standardColors[COLOR_CONTROL];
+
+			case CANSymbol::TYPE_DLC:
+				if(s.m_data > 8)
+					return m_standardColors[COLOR_ERROR];
+				else
+					return m_standardColors[COLOR_CONTROL];
+
+			case CANSymbol::TYPE_DATA:
+				return m_standardColors[COLOR_DATA];
+
+			case CANSymbol::TYPE_CRC_OK:
+				return m_standardColors[COLOR_CHECKSUM_OK];
+
+			case CANSymbol::TYPE_CRC_DELIM:
+			case CANSymbol::TYPE_ACK_DELIM:
+			case CANSymbol::TYPE_EOF:
+				if(s.m_data)
+					return m_standardColors[COLOR_PREAMBLE];
+				else
+					return m_standardColors[COLOR_ERROR];
+
+			case CANSymbol::TYPE_ACK:
+				if(!s.m_data)
+					return m_standardColors[COLOR_CHECKSUM_OK];
+				else
+					return m_standardColors[COLOR_CHECKSUM_BAD];
+
+			case CANSymbol::TYPE_CRC_BAD:
+			default:
+				return m_standardColors[COLOR_ERROR];
+		}
 	}
 
 	return m_standardColors[COLOR_ERROR];
@@ -317,47 +566,72 @@ string CANDecoder::GetText(int i)
 		switch(s.m_stype)
 		{
 			case CANSymbol::TYPE_SOF:
-				snprintf(tmp, sizeof(tmp), "SOF");
+				return "SOF";
+
+			case CANSymbol::TYPE_ID:
+				snprintf(tmp, sizeof(tmp), "ID %03x", s.m_data);
 				break;
-			case CANSymbol::TYPE_SID:
-				{
-					uint16_t sid = 0;
-					sid += s.m_data[1];
-					sid <<= 8;
-					sid += s.m_data[0];
-					snprintf(tmp, sizeof(tmp), "SID: %02x", sid);
-				}
-				break;
+
+			case CANSymbol::TYPE_FD:
+				if(s.m_data)
+					return "FD";
+				else
+					return "STD";
+
 			case CANSymbol::TYPE_RTR:
-				snprintf(tmp, sizeof(tmp), "RTR: %u", s.m_data[0]);
-				break;
-			case CANSymbol::TYPE_IDE:
-				snprintf(tmp, sizeof(tmp), "IDE: %u", s.m_data[0]);
-				break;
+				if(s.m_data)
+					return "REQ";
+				else
+					return "DATA";
+
 			case CANSymbol::TYPE_R0:
-				snprintf(tmp, sizeof(tmp), "R0: %u", s.m_data[0]);
-				break;
+				return "RSVD";
+
 			case CANSymbol::TYPE_DLC:
-				snprintf(tmp, sizeof(tmp), "DLC: %u", s.m_data[0]);
+				snprintf(tmp, sizeof(tmp), "Len %u", s.m_data);
 				break;
+
 			case CANSymbol::TYPE_DATA:
-				snprintf(tmp, sizeof(tmp), "%02x", s.m_data[0]);
+				snprintf(tmp, sizeof(tmp), "%02x", s.m_data);
 				break;
-			case CANSymbol::TYPE_CRC:
-				{
-					uint16_t crc = 0;
-					crc += s.m_data[1];
-					crc <<= 8;
-					crc += s.m_data[0];
-					snprintf(tmp, sizeof(tmp), "CRC: %02x", crc);
-				}
+
+			case CANSymbol::TYPE_CRC_OK:
+			case CANSymbol::TYPE_CRC_BAD:
+				snprintf(tmp, sizeof(tmp), "CRC: %04x", s.m_data);
 				break;
+
+			case CANSymbol::TYPE_CRC_DELIM:
+				return "CRC DELIM";
+
+			case CANSymbol::TYPE_ACK:
+				if(!s.m_data)
+					return "ACK";
+				else
+					return "NAK";
+
+			case CANSymbol::TYPE_ACK_DELIM:
+				return "ACK DELIM";
+
+			case CANSymbol::TYPE_EOF:
+				return "EOF";
+
 			default:
-				snprintf(tmp, sizeof(tmp), "ERR");
-				break;
+				return "ERROR";
 		}
 		return string(tmp);
 	}
-	return "";
+
+	return "ERROR";
 }
 
+vector<string> CANDecoder::GetHeaders()
+{
+	vector<string> ret;
+	ret.push_back("ID");
+	ret.push_back("Mode");
+	ret.push_back("Format");
+	ret.push_back("Type");
+	ret.push_back("Ack");
+	ret.push_back("Len");
+	return ret;
+}

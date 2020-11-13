@@ -38,12 +38,14 @@
 class MovingAverageFilter : public Filter
 {
 public:
-	MovingAverageFilter(std::string color);
+	MovingAverageFilter(const std::string& color);
 
 	virtual void Refresh();
 
 	virtual bool NeedsConfig();
 	virtual bool IsOverlay();
+
+	virtual void ClearSweeps();
 
 	static std::string GetProtocolName();
 	virtual void SetDefaultName();
@@ -56,6 +58,11 @@ public:
 
 protected:
 	std::string m_depthname;
+
+	float m_min;
+	float m_max;
+	float m_range;
+	float m_offset;
 };
 
 #endif

@@ -79,7 +79,7 @@ void PeakDetector::FindPeaks(AnalogWaveform* cap, int64_t max_peaks, float searc
 
 			//If the highest point in the search window is at our location, we're a peak
 			if(max_delta == 0)
-				peaks.push_back(Peak(i, max_value));
+				peaks.push_back(Peak(cap->m_offsets[i], max_value));
 		}
 
 		//Sort the peak table and pluck out the requested count
@@ -93,14 +93,14 @@ void PeakDetector::FindPeaks(AnalogWaveform* cap, int64_t max_peaks, float searc
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-PeakDetectionFilter::PeakDetectionFilter(OscilloscopeChannel::ChannelType type, string color, Category cat)
+PeakDetectionFilter::PeakDetectionFilter(OscilloscopeChannel::ChannelType type, const string& color, Category cat)
 	: Filter(type, color, cat)
+	, m_numpeaksname("Number of Peaks")
+	, m_peakwindowname("Peak Window")
 {
-	m_numpeaksname = "Number of Peaks";
 	m_parameters[m_numpeaksname] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_COUNTS));
 	m_parameters[m_numpeaksname].SetIntVal(10);
 
-	m_peakwindowname = "Peak Window";
 	m_parameters[m_peakwindowname] = FilterParameter(FilterParameter::TYPE_FLOAT, Unit(Unit::UNIT_HZ));
 	m_parameters[m_peakwindowname].SetFloatVal(500000); //500 kHz between peaks
 }

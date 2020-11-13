@@ -46,13 +46,13 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-SCPITMCTransport::SCPITMCTransport(string args)
+SCPITMCTransport::SCPITMCTransport(const string& args)
+	: m_devicePath(args)
 {
 	// TODO: add configuration options:
 	// - set the maximum request size of usbtmc read requests (currently 2032)
 	// - set timeout value (when using kernel that has usbtmc v2 version)
 	// - set size of staging buffer (or get rid of it entirely?)
-	m_devicePath = args;
 
 	// FIXME: currently not used
 	m_timeout = 1000;
@@ -103,7 +103,7 @@ string SCPITMCTransport::GetConnectionString()
 	return m_devicePath;
 }
 
-bool SCPITMCTransport::SendCommand(string cmd)
+bool SCPITMCTransport::SendCommand(const string& cmd)
 {
 	if (!IsConnected())
 		return false;
@@ -119,7 +119,7 @@ bool SCPITMCTransport::SendCommand(string cmd)
 	return (result == (int)cmd.length());
 }
 
-string SCPITMCTransport::ReadReply()
+string SCPITMCTransport::ReadReply(bool endOnSemicolon)
 {
 	string ret;
 
@@ -133,7 +133,7 @@ string SCPITMCTransport::ReadReply()
 		if (m_data_depleted)
 			break;
 		ReadRawData(1, (unsigned char *)&tmp);
-		if( (tmp == '\n') || (tmp == ';') )
+		if( (tmp == '\n') || ( (tmp == ';') && endOnSemicolon ) )
 			break;
 		else
 			ret += tmp;
@@ -167,7 +167,7 @@ void SCPITMCTransport::ReadRawData(size_t len, unsigned char* buf)
 			// This is what we'd use if we could be sure that the installed Linux kernel had
 			// usbtmc driver v2.
 			m_data_in_staging_buf = read(m_handle, (char *)m_staging_buf, m_staging_buf_size);
-#else			
+#else
 			// Split up one potentially large read into a bunch of smaller ones.
 			// The performance impact of this is pretty small.
 			const int max_bytes_per_req = 2032;

@@ -58,11 +58,12 @@ Gdk::Color Filter::m_standardColors[STANDARD_COLOR_COUNT] =
 
 Filter::Filter(
 	OscilloscopeChannel::ChannelType type,
-	string color,
+	const string& color,
 	Category cat)
 	: OscilloscopeChannel(NULL, "", type, color, 1)	//TODO: handle this better?
 	, m_category(cat)
 	, m_dirty(true)
+	, m_usingDefault(true)
 {
 	m_physical = false;
 	m_filters.emplace(this);
@@ -132,7 +133,7 @@ void Filter::RefreshIfDirty()
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Enumeration
 
-void Filter::DoAddDecoderClass(string name, CreateProcType proc)
+void Filter::DoAddDecoderClass(const string& name, CreateProcType proc)
 {
 	m_createprocs[name] = proc;
 }
@@ -143,7 +144,7 @@ void Filter::EnumProtocols(vector<string>& names)
 		names.push_back(it->first);
 }
 
-Filter* Filter::CreateFilter(string protocol, string color)
+Filter* Filter::CreateFilter(const string& protocol, const string& color)
 {
 	if(m_createprocs.find(protocol) != m_createprocs.end())
 		return m_createprocs[protocol](color);
@@ -244,7 +245,7 @@ void Filter::SampleOnRisingEdges(DigitalWaveform* data, DigitalWaveform* clock, 
 
 		//Throw away data samples until the data is synced with us
 		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata < dlen) && (data->m_offsets[ndata] * data->m_timescale < clkstart) )
+		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -290,7 +291,7 @@ void Filter::SampleOnRisingEdges(DigitalBusWaveform* data, DigitalWaveform* cloc
 
 		//Throw away data samples until the data is synced with us
 		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata < dlen) && (data->m_offsets[ndata] * data->m_timescale < clkstart) )
+		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -336,7 +337,7 @@ void Filter::SampleOnFallingEdges(DigitalWaveform* data, DigitalWaveform* clock,
 
 		//Throw away data samples until the data is synced with us
 		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata < dlen) && (data->m_offsets[ndata] * data->m_timescale < clkstart) )
+		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -382,7 +383,7 @@ void Filter::SampleOnAnyEdges(DigitalWaveform* data, DigitalWaveform* clock, Dig
 
 		//Throw away data samples until the data is synced with us
 		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata < dlen) && (data->m_offsets[ndata] * data->m_timescale < clkstart) )
+		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -428,7 +429,7 @@ void Filter::SampleOnAnyEdges(DigitalBusWaveform* data, DigitalWaveform* clock, 
 
 		//Throw away data samples until the data is synced with us
 		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata < dlen) && (data->m_offsets[ndata] * data->m_timescale < clkstart) )
+		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -512,6 +513,110 @@ void Filter::FindZeroCrossings(AnalogWaveform* data, float threshold, std::vecto
 		edges.push_back(t);
 		last = value;
 	}
+}
+
+/**
+	@brief Find edges in a waveform, discarding repeated samples
+ */
+void Filter::FindZeroCrossings(DigitalWaveform* data, vector<int64_t>& edges)
+{
+	//Find times of the zero crossings
+	bool first = true;
+	bool last = data->m_samples[0];
+	int64_t phoff = data->m_timescale/2 + data->m_triggerPhase;
+	size_t len = data->m_samples.size();
+	for(size_t i=1; i<len; i++)
+	{
+		bool value = data->m_samples[i];
+
+		//Save the last value
+		if(first)
+		{
+			last = value;
+			first = false;
+			continue;
+		}
+
+		//Skip samples with no transition
+		if(last == value)
+			continue;
+
+		edges.push_back(phoff + data->m_timescale * data->m_offsets[i]);
+		last = value;
+	}
+}
+
+/**
+	@brief Find rising edges in a waveform
+ */
+void Filter::FindRisingEdges(DigitalWaveform* data, vector<int64_t>& edges)
+{
+	//Find times of the zero crossings
+	bool first = true;
+	bool last = data->m_samples[0];
+	int64_t phoff = data->m_timescale/2 + data->m_triggerPhase;
+	size_t len = data->m_samples.size();
+	for(size_t i=1; i<len; i++)
+	{
+		bool value = data->m_samples[i];
+
+		//Save the last value
+		if(first)
+		{
+			last = value;
+			first = false;
+			continue;
+		}
+
+		//Save samples with an edge
+		if(value && !last)
+			edges.push_back(phoff + data->m_timescale * data->m_offsets[i]);
+
+		last = value;
+	}
+}
+
+/**
+	@brief Find falling edges in a waveform
+ */
+void Filter::FindFallingEdges(DigitalWaveform* data, vector<int64_t>& edges)
+{
+	//Find times of the zero crossings
+	bool first = true;
+	bool last = data->m_samples[0];
+	int64_t phoff = data->m_timescale/2 + data->m_triggerPhase;
+	size_t len = data->m_samples.size();
+	for(size_t i=1; i<len; i++)
+	{
+		bool value = data->m_samples[i];
+
+		//Save the last value
+		if(first)
+		{
+			last = value;
+			first = false;
+			continue;
+		}
+
+		//Save samples with an edge
+		if(!value && last)
+			edges.push_back(phoff + data->m_timescale * data->m_offsets[i]);
+
+		last = value;
+	}
+}
+
+/**
+	@brief Find edges in a waveform, discarding repeated samples
+
+	No extra resolution vs the int64 version, just for interface compatibility with the analog interpolating version.
+ */
+void Filter::FindZeroCrossings(DigitalWaveform* data, vector<double>& edges)
+{
+	vector<int64_t> tmp;
+	FindZeroCrossings(data, tmp);
+	for(auto e : tmp)
+		edges.push_back(e);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -672,6 +777,29 @@ float Filter::InterpolateTime(AnalogWaveform* cap, size_t a, float voltage)
 	//If the voltage isn't between the two points, abort
 	float fa = cap->m_samples[a];
 	float fb = cap->m_samples[a+1];
+	bool ag = (fa > voltage);
+	bool bg = (fb > voltage);
+	if( (ag && bg) || (!ag && !bg) )
+		return 0;
+
+	//no need to divide by time, sample spacing is normalized to 1 timebase unit
+	float slope = (fb - fa);
+	float delta = voltage - fa;
+	return delta / slope;
+}
+
+/**
+	@brief Interpolates the actual time of a differential threshold crossing between two samples
+
+	Simple linear interpolation for now (TODO sinc)
+
+	@return Interpolated crossing time. 0=a, 1=a+1, fractional values are in between.
+ */
+float Filter::InterpolateTime(AnalogWaveform* p, AnalogWaveform* n, size_t a, float voltage)
+{
+	//If the voltage isn't between the two points, abort
+	float fa = p->m_samples[a] - n->m_samples[a];
+	float fb = p->m_samples[a+1] - n->m_samples[a+1];
 	bool ag = (fa > voltage);
 	bool bg = (fb > voltage);
 	if( (ag && bg) || (!ag && !bg) )

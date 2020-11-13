@@ -40,7 +40,7 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-SCPISocketTransport::SCPISocketTransport(string args)
+SCPISocketTransport::SCPISocketTransport(const string& args)
 	: m_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
 {
 	char hostname[128];
@@ -65,9 +65,9 @@ SCPISocketTransport::SCPISocketTransport(string args)
 		LogError("Couldn't connect to socket\n");
 		return;
 	}
-	if(!m_socket.SetRxTimeout(2000000))
+	if(!m_socket.SetRxTimeout(5000000))
 		LogWarning("No Rx timeout: %s\n", strerror(errno));
-	if(!m_socket.SetTxTimeout(2000000))
+	if(!m_socket.SetTxTimeout(5000000))
 		LogWarning("No Tx timeout: %s\n", strerror(errno));
 	if(!m_socket.DisableNagle())
 	{
@@ -101,14 +101,14 @@ string SCPISocketTransport::GetConnectionString()
 	return string(tmp);
 }
 
-bool SCPISocketTransport::SendCommand(string cmd)
+bool SCPISocketTransport::SendCommand(const string& cmd)
 {
 	LogTrace("Sending %s\n", cmd.c_str());
 	string tempbuf = cmd + "\n";
 	return m_socket.SendLooped((unsigned char*)tempbuf.c_str(), tempbuf.length());
 }
 
-string SCPISocketTransport::ReadReply()
+string SCPISocketTransport::ReadReply(bool endOnSemicolon)
 {
 	//FIXME: there *has* to be a more efficient way to do this...
 	char tmp = ' ';
@@ -117,7 +117,7 @@ string SCPISocketTransport::ReadReply()
 	{
 		if(!m_socket.RecvLooped((unsigned char*)&tmp, 1))
 			break;
-		if( (tmp == '\n') || (tmp == ';') )
+		if( (tmp == '\n') || ( (tmp == ';') && endOnSemicolon ) )
 			break;
 		else
 			ret += tmp;

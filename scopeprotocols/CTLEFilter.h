@@ -40,7 +40,7 @@
 class CTLEFilter : public DeEmbedFilter
 {
 public:
-	CTLEFilter(std::string color);
+	CTLEFilter(const std::string& color);
 
 	virtual void Refresh();
 
@@ -49,14 +49,6 @@ public:
 
 	static std::string GetProtocolName();
 	virtual void SetDefaultName();
-
-	/**
-		@brief Converts a frequency in Hz to a phase velocity in rad/sec
-	 */
-	float FreqToPhase(float hz)
-	{
-		return 2 * M_PI * hz;
-	}
 
 	PROTOCOL_DECODER_INITPROC(CTLEFilter)
 

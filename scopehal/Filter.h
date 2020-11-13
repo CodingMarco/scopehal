@@ -62,8 +62,21 @@ public:
 		CAT_RF				//Frequency domain analysis (FFT etc) and other RF stuff
 	};
 
-	Filter(OscilloscopeChannel::ChannelType type, std::string color, Category cat);
+	Filter(OscilloscopeChannel::ChannelType type, const std::string& color, Category cat);
 	virtual ~Filter();
+
+	/**
+		@brief Specifies whether we're using an auto-generated name or not
+	 */
+	void UseDefaultName(bool use)
+	{
+		m_usingDefault = use;
+		if(use)
+			SetDefaultName();
+	}
+
+	bool IsUsingDefaultName()
+	{ return m_usingDefault; }
 
 	virtual void Refresh() =0;
 
@@ -125,7 +138,7 @@ public:
 
 		Do not change ordering, add new items to the end only.
 	 */
-	enum
+	enum FilterColor
 	{
 		COLOR_DATA,			//protocol data
 		COLOR_CONTROL,		//generic control sequences
@@ -137,7 +150,7 @@ public:
 		COLOR_IDLE,			//downtime between frames
 
 		STANDARD_COLOR_COUNT
-	} standard_color;
+	};
 
 	static Gdk::Color m_standardColors[STANDARD_COLOR_COUNT];
 
@@ -148,6 +161,9 @@ protected:
 
 	///Indicates if our output is out-of-sync with our input
 	bool m_dirty;
+
+	///Indicates we're using an auto-generated name
+	bool m_usingDefault;
 
 	bool VerifyAllInputsOK(bool allowEmpty = false);
 	bool VerifyInputOK(size_t i, bool allowEmpty = false);
@@ -174,8 +190,9 @@ public:
 	virtual Gdk::Color GetColor(int i);
 	virtual std::string GetText(int i);
 
-	//Helpers for superresolution
+	//Helpers for sub-sample interoplation
 	static float InterpolateTime(AnalogWaveform* cap, size_t a, float voltage);
+	static float InterpolateTime(AnalogWaveform* p, AnalogWaveform* n, size_t a, float voltage);
 	static float InterpolateValue(AnalogWaveform* cap, size_t index, float frac_ticks);
 
 	//Helpers for more complex measurements
@@ -187,28 +204,34 @@ public:
 	static float GetAvgVoltage(AnalogWaveform* cap);
 	static std::vector<size_t> MakeHistogram(AnalogWaveform* cap, float low, float high, size_t bins);
 
+	//Samples a digital channel on the edges of another channel.
+	//The two channels need not be the same sample rate.
+	static void SampleOnAnyEdges(DigitalWaveform* data, DigitalWaveform* clock, DigitalWaveform& samples);
+	static void SampleOnAnyEdges(DigitalBusWaveform* data, DigitalWaveform* clock, DigitalBusWaveform& samples);
+	static void SampleOnRisingEdges(DigitalWaveform* data, DigitalWaveform* clock, DigitalWaveform& samples);
+	static void SampleOnRisingEdges(DigitalBusWaveform* data, DigitalWaveform* clock, DigitalBusWaveform& samples);
+	static void SampleOnFallingEdges(DigitalWaveform* data, DigitalWaveform* clock, DigitalWaveform& samples);
+
+	//Find interpolated zero crossings of a signal
+	static void FindZeroCrossings(AnalogWaveform* data, float threshold, std::vector<int64_t>& edges);
+	static void FindZeroCrossings(AnalogWaveform* data, float threshold, std::vector<double>& edges);
+
+	//Find edges in a signal (discarding repeated samples)
+	static void FindZeroCrossings(DigitalWaveform* data, std::vector<int64_t>& edges);
+	static void FindRisingEdges(DigitalWaveform* data, std::vector<int64_t>& edges);
+	static void FindFallingEdges(DigitalWaveform* data, std::vector<int64_t>& edges);
+	static void FindZeroCrossings(DigitalWaveform* data, std::vector<double>& edges);
+
 protected:
 	//Common text formatting
 	virtual std::string GetTextForAsciiChannel(int i, size_t stream);
 
-	//Samples a digital channel on the edges of another channel.
-	//The two channels need not be the same sample rate.
-	void SampleOnAnyEdges(DigitalWaveform* data, DigitalWaveform* clock, DigitalWaveform& samples);
-	void SampleOnAnyEdges(DigitalBusWaveform* data, DigitalWaveform* clock, DigitalBusWaveform& samples);
-	void SampleOnRisingEdges(DigitalWaveform* data, DigitalWaveform* clock, DigitalWaveform& samples);
-	void SampleOnRisingEdges(DigitalBusWaveform* data, DigitalWaveform* clock, DigitalBusWaveform& samples);
-	void SampleOnFallingEdges(DigitalWaveform* data, DigitalWaveform* clock, DigitalWaveform& samples);
-
-	//Find interpolated zero crossings of a signal
-	void FindZeroCrossings(AnalogWaveform* data, float threshold, std::vector<int64_t>& edges);
-	void FindZeroCrossings(AnalogWaveform* data, float threshold, std::vector<double>& edges);
-
 public:
-	typedef Filter* (*CreateProcType)(std::string);
-	static void DoAddDecoderClass(std::string name, CreateProcType proc);
+	typedef Filter* (*CreateProcType)(const std::string&);
+	static void DoAddDecoderClass(const std::string& name, CreateProcType proc);
 
 	static void EnumProtocols(std::vector<std::string>& names);
-	static Filter* CreateFilter(std::string protocol, std::string color);
+	static Filter* CreateFilter(const std::string& protocol, const std::string& color);
 
 protected:
 	//Class enumeration
@@ -220,7 +243,7 @@ protected:
 };
 
 #define PROTOCOL_DECODER_INITPROC(T) \
-	static Filter* CreateInstance(std::string color) \
+	static Filter* CreateInstance(const std::string& color) \
 	{ \
 		return new T(color); \
 	} \

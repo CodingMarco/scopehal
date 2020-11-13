@@ -78,7 +78,8 @@ typedef Waveform<EthernetFrameSegment> EthernetWaveform;
 class EthernetProtocolDecoder : public PacketDecoder
 {
 public:
-	EthernetProtocolDecoder(std::string color);
+	EthernetProtocolDecoder(const std::string& color);
+	virtual ~EthernetProtocolDecoder();
 
 	virtual std::string GetText(int i);
 	virtual Gdk::Color GetColor(int i);
@@ -94,6 +95,10 @@ protected:
 		std::vector<uint64_t>& starts,
 		std::vector<uint64_t>& ends,
 		EthernetWaveform* cap);
+
+	std::string m_outfile;
+	std::string m_cachedOutputFname;
+	FILE* m_fpOut;
 };
 
 #endif

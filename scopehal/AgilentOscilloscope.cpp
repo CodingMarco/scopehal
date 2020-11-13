@@ -81,15 +81,16 @@ AgilentOscilloscope::AgilentOscilloscope(SCPITransport* transport)
 		}
 
 		//Create the channel
-		m_channels.push_back(
-			new OscilloscopeChannel(
+		auto chan = new OscilloscopeChannel(
 			this,
 			chname,
 			OscilloscopeChannel::CHANNEL_TYPE_ANALOG,
 			color,
 			1,
 			i,
-			true));
+			true);
+		m_channels.push_back(chan);
+		chan->SetDefaultDisplayName();
 
 		//Configure transport format to raw 8-bit int
 		m_transport->SendCommand(":WAV:SOUR " + chname);
@@ -110,6 +111,7 @@ AgilentOscilloscope::AgilentOscilloscope(SCPITransport* transport)
 		m_channels.size(),
 		true);
 	m_channels.push_back(m_extTrigChannel);
+	m_extTrigChannel->SetDefaultDisplayName();
 
 	//See what options we have
 	m_transport->SendCommand("*OPT?");
@@ -481,7 +483,7 @@ bool AgilentOscilloscope::AcquireData()
 		m_transport->SendCommand(":WAV:SOUR " + m_channels[i]->GetHwname());
 		m_transport->SendCommand(":WAV:PRE?");
 		string reply = m_transport->ReadReply();
-		sscanf(reply.c_str(), "%u,%u,%lu,%u,%lf,%lf,%lf,%lf,%lf,%lf",
+		sscanf(reply.c_str(), "%u,%u,%zu,%u,%lf,%lf,%lf,%lf,%lf,%lf",
 				&format, &type, &length, &average_count, &xincrement, &xorigin, &xreference, &yincrement, &yorigin, &yreference);
 
 		//Figure out the sample rate

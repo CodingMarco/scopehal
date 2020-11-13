@@ -36,7 +36,7 @@ using namespace std;
 
 string StreamDescriptor::GetName()
 {
-	string name = m_channel->m_displayname;
+	string name = m_channel->GetDisplayName();
 	if(m_channel->GetStreamCount() > 1)
 		name += string(".") + m_channel->GetStreamName(m_stream);
 	return name;
@@ -92,6 +92,10 @@ void FlowGraphNode::SetInput(size_t i, StreamDescriptor stream, bool force)
 {
 	if(i < m_signalNames.size())
 	{
+		//Calling SetInput with the current input is a legal no-op
+		if(stream == m_inputs[i])
+			return;
+
 		if(stream.m_channel == NULL)	//NULL is always legal
 		{
 			m_inputs[i] = StreamDescriptor(NULL, 0);
@@ -131,7 +135,7 @@ void FlowGraphNode::SetInput(size_t i, StreamDescriptor stream, bool force)
 	@param force	Forcibly connect this stream without checking to make sure it's the right type.
 					Should only be set true by by Filter::LoadInputs() or in similar specialized situations.
  */
-void FlowGraphNode::SetInput(string name, StreamDescriptor stream, bool force)
+void FlowGraphNode::SetInput(const string& name, StreamDescriptor stream, bool force)
 {
 	//Find the channel
 	for(size_t i=0; i<m_signalNames.size(); i++)
@@ -170,7 +174,7 @@ string FlowGraphNode::GetInputDisplayName(size_t i)
 {
 	auto in = m_inputs[i];
 	if(in.m_channel->GetStreamCount() > 1)
-		return in.m_channel->m_displayname + "." + in.m_channel->GetStreamName(in.m_stream);
+		return in.m_channel->GetDisplayName() + "." + in.m_channel->GetStreamName(in.m_stream);
 	else
-		return in.m_channel->m_displayname;
+		return in.m_channel->GetDisplayName();
 }

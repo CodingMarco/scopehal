@@ -55,7 +55,7 @@ struct WaveformPreamble
 };
 
 /**
-	@brief Generic representation of an oscilloscope or logic analyzer.
+	@brief Generic representation of an oscilloscope, logic analyzer, or spectrum analyzer.
 
 	An Oscilloscope contains triggering logic and one or more OscilloscopeChannel objects.
  */
@@ -113,12 +113,12 @@ public:
 	/**
 		@brief Gets a channel given the display name
 	 */
-	OscilloscopeChannel* GetChannelByDisplayName(std::string name);
+	OscilloscopeChannel* GetChannelByDisplayName(const std::string& name);
 
 	/**
 		@brief Gets a channel given the hardware name
 	 */
-	OscilloscopeChannel* GetChannelByHwName(std::string name);
+	OscilloscopeChannel* GetChannelByHwName(const std::string& name);
 
 	/**
 		@brief Checks if a channel is enabled in hardware.
@@ -131,6 +131,20 @@ public:
 		@param i Zero-based index of channel
 	 */
 	virtual void EnableChannel(size_t i) =0;
+
+	/**
+		@brief Determines if a channel can be enabled.
+
+		@return False if the channel cannot currently be used
+				(due to interleave conflicts or other hardware limitations).
+
+				True if the channel is available.
+
+		@param i Zero-based index of channel
+
+		The default implementation always returns true.
+	 */
+	virtual bool CanEnableChannel(size_t i);
 
 	/**
 		@brief Turn a channel off, given the index.
@@ -156,6 +170,33 @@ public:
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type) =0;
 
 	/**
+		@brief Gets the display name for a channel. This is an arbitrary user-selected string.
+
+		Some instruments allow displaying channel names in the GUI or on probes. If this is supported, the
+		driver should override this function.
+
+		The default function simply stores the display name in the Oscilloscope object, and is appropriate for
+		instruments which have no concept of a nickname or display name.
+
+		@param i Zero-based index of channel
+	 */
+	virtual std::string GetChannelDisplayName(size_t i);
+
+	/**
+		@brief Sets the display name for a channel. This is an arbitrary user-selected string.
+
+		Some instruments allow displaying channel names in the GUI or on probes. If this is supported, the
+		driver should override this function.
+
+		The default function simply stores the display name in the Oscilloscope object, and is appropriate for
+		instruments which have no concept of a nickname or display name.
+
+		@param i	Zero-based index of channel
+		@param name	Name of the channel
+	 */
+	virtual void SetChannelDisplayName(size_t i, std::string name);
+
+	/**
 		@brief Gets the probe attenuation for an input channel.
 
 		Note that this function returns attenuation, not gain.
@@ -172,6 +213,13 @@ public:
 		@param atten	Attenuation factor
 	 */
 	virtual void SetChannelAttenuation(size_t i, double atten) =0;
+
+	/**
+		@brief Gets the set of available bandwidth limiters for an input channel.
+
+		@param i Zero-based index of channel
+	 */
+	virtual std::vector<unsigned int> GetChannelBandwidthLimiters(size_t i);
 
 	/**
 		@brief Gets the bandwidth limit for an input channel.
@@ -541,6 +589,53 @@ public:
 	virtual void SetDigitalThreshold(size_t channel, float level);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Frequency domain channel configuration
+
+	/**
+		@brief Sets the span for frequency-domain channels
+
+		@param span		Span, in Hz
+	 */
+	virtual void SetSpan(int64_t span);
+
+	/**
+		@brief Gets the span for frequency-domain channels
+	 */
+	virtual int64_t GetSpan();
+
+	/**
+		@brief Sets the center frequency for frequency-domain channels
+
+		@param channel	Channel number
+		@param freq		Center frequency, in Hz
+	 */
+	virtual void SetCenterFrequency(size_t channel, int64_t freq);
+
+	/**
+		@brief Gets the center frequency for a frequency-domain channel
+
+		@param channel	Channel number
+	 */
+	virtual int64_t GetCenterFrequency(size_t channel);
+
+	/**
+		@brief Gets the resolution bandwidth for frequency-domain channels
+	 */
+	virtual void SetResolutionBandwidth(int64_t rbw);
+
+	/**
+		@brief Gets the resolution bandwidth for frequency-domain channels
+	 */
+	virtual int64_t GetResolutionBandwidth();
+
+	/**
+		@brief Returns true if the instrument has at least one frequency-domain channel
+	 */
+	virtual bool HasFrequencyControls();
+
+	//TODO: window controls
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Configuration storage
 
 	/**
@@ -571,6 +666,9 @@ protected:
 
 	///The channels
 	std::vector<OscilloscopeChannel*> m_channels;
+
+	///Display names for channels
+	std::map<OscilloscopeChannel*, std::string> m_channelDisplayNames;
 
 	//The trigger
 	Trigger* m_trigger;

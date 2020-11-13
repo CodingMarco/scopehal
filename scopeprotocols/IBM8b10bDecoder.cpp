@@ -41,8 +41,9 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-IBM8b10bDecoder::IBM8b10bDecoder(string color)
+IBM8b10bDecoder::IBM8b10bDecoder(const string& color)
 	: Filter(OscilloscopeChannel::CHANNEL_TYPE_COMPLEX, color, CAT_SERIAL)
+	, m_cachedDisplayFormat(FORMAT_DOTTED)
 {
 	//Set up channels
 	CreateInput("data");
@@ -302,7 +303,7 @@ void IBM8b10bDecoder::Refresh()
 		}
 
 		bool disperr = false;
-		int old_disp = last_disp;
+		//int old_disp = last_disp;
 		if(total_disp > 0 && last_disp > 0)
 		{
 			disperr = true;
@@ -394,9 +395,9 @@ string IBM8b10bDecoder::GetText(int i)
 			if(m_cachedDisplayFormat == FORMAT_DOTTED)
 			{
 				if(s.m_control)
-					snprintf(tmp, sizeof(tmp), "K%d.%d", left, right);
+					snprintf(tmp, sizeof(tmp), "K%u.%u", left, right);
 				else
-					snprintf(tmp, sizeof(tmp), "D%d.%d", left, right);
+					snprintf(tmp, sizeof(tmp), "D%u.%u", left, right);
 			}
 
 			//Hex format

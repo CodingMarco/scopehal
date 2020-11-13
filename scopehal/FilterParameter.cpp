@@ -42,7 +42,8 @@ using namespace std;
 // FilterParameter
 
 FilterParameter::FilterParameter(ParameterTypes type, Unit unit)
-	: m_type(type)
+	: m_fileIsOutput(false)
+	, m_type(type)
 	, m_unit(unit)
 	, m_intval(0)
 	, m_floatval(0)
@@ -51,7 +52,7 @@ FilterParameter::FilterParameter(ParameterTypes type, Unit unit)
 
 }
 
-void FilterParameter::ParseString(string str)
+void FilterParameter::ParseString(const string& str)
 {
 	switch(m_type)
 	{
@@ -89,7 +90,6 @@ void FilterParameter::ParseString(string str)
 
 				//Split out semicolon-delimited filenames
 				string tmp;
-				str += ';';
 				for(size_t i=0; i<str.length(); i++)
 				{
 					if(str[i] ==';')
@@ -105,6 +105,11 @@ void FilterParameter::ParseString(string str)
 					}
 
 					tmp += str[i];
+				}
+				if(tmp != "")
+				{
+					m_string = tmp;
+					m_filenames.push_back(tmp);
 				}
 			}
 			break;
@@ -197,7 +202,7 @@ void FilterParameter::SetFloatVal(float f)
 	m_filenames.clear();
 }
 
-void FilterParameter::SetFileName(string f)
+void FilterParameter::SetFileName(const string& f)
 {
 	m_intval = 0;
 	m_floatval = 0;
@@ -206,7 +211,7 @@ void FilterParameter::SetFileName(string f)
 	m_filenames.push_back(f);
 }
 
-void FilterParameter::SetFileNames(vector<string> names)
+void FilterParameter::SetFileNames(const vector<string>& names)
 {
 	m_intval = 0;
 	m_floatval = 0;

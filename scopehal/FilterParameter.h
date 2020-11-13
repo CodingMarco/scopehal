@@ -50,13 +50,9 @@ public:
 		TYPE_STRING		//arbitrary string
 	};
 
-	FilterParameter()
-	: m_unit(Unit::UNIT_PS)
-	{}
+	FilterParameter(ParameterTypes type = FilterParameter::TYPE_FLOAT, Unit unit  = Unit(Unit::UNIT_PS));
 
-	FilterParameter(ParameterTypes type, Unit unit);
-
-	void ParseString(std::string str);
+	void ParseString(const std::string& str);
 	std::string ToString();
 
 	bool GetBoolVal()
@@ -71,8 +67,8 @@ public:
 	{ m_intval = b; }
 	void SetIntVal(int64_t i);
 	void SetFloatVal(float f);
-	void SetFileName(std::string f);
-	void SetFileNames(std::vector<std::string> names);
+	void SetFileName(const std::string& f);
+	void SetFileNames(const std::vector<std::string>& names);
 
 	ParameterTypes GetType()
 	{ return m_type; }
@@ -81,8 +77,11 @@ public:
 	std::string m_fileFilterMask;
 	std::string m_fileFilterName;
 
+	//Specifies TYPE_FILENAME is an output
+	bool m_fileIsOutput;
+
 	//Add an enumerated value
-	void AddEnumValue(std::string name, int value)
+	void AddEnumValue(const std::string& name, int value)
 	{
 		m_forwardEnumMap[name] = value;
 		m_reverseEnumMap[value] = name;

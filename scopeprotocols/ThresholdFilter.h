@@ -38,7 +38,7 @@
 class ThresholdFilter : public Filter
 {
 public:
-	ThresholdFilter(std::string color);
+	ThresholdFilter(const std::string& color);
 
 	virtual void Refresh();
 
@@ -53,6 +53,7 @@ public:
 
 protected:
 	std::string m_threshname;
+	std::string m_hysname;
 };
 
 #endif

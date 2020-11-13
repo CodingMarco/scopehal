@@ -37,7 +37,7 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-EyeJitterMeasurement::EyeJitterMeasurement(string color)
+EyeJitterMeasurement::EyeJitterMeasurement(const string& color)
 	: Filter(OscilloscopeChannel::CHANNEL_TYPE_ANALOG, color, CAT_MEASUREMENT)
 {
 	m_xAxisUnit = Unit(Unit::UNIT_MILLIVOLTS);
@@ -167,8 +167,8 @@ void EyeJitterMeasurement::Refresh()
 
 		int64_t cleft = 0;		//left side of eye opening
 		int64_t cright = w-1;	//right side of eye opening
-		int64_t left = w-1;		//left side of eye edge
-		int64_t right = 0;		//right side of eye edge
+		int64_t left = cright;	//left side of eye edge
+		int64_t right = cleft;	//right side of eye edge
 
 		//Find the edges of the eye in this scanline
 		for(int64_t dx = 0; dx < xcenter; dx ++)

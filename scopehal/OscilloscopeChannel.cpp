@@ -43,9 +43,9 @@ using namespace std;
 
 OscilloscopeChannel::OscilloscopeChannel(
 	Oscilloscope* scope,
-	string hwname,
+	const string& hwname,
 	OscilloscopeChannel::ChannelType type,
-	string color,
+	const string& color,
 	int width,
 	size_t index,
 	bool physical)
@@ -61,17 +61,14 @@ OscilloscopeChannel::OscilloscopeChannel(
 	, m_xAxisUnit(Unit::UNIT_PS)
 	, m_yAxisUnit(Unit::UNIT_VOLTS)
 {
-	//Create a stream for our output.
-	//Normal channels only have one stream.
-	//Special instruments like SDRs with complex output, or filters/decodes, can have arbitrarily many.
-	AddStream("data");
+	SharedCtorInit();
 }
 
 OscilloscopeChannel::OscilloscopeChannel(
 	Oscilloscope* scope,
-	string hwname,
+	const string& hwname,
 	OscilloscopeChannel::ChannelType type,
-	string color,
+	const string& color,
 	Unit xunit,
 	Unit yunit,
 	int width,
@@ -89,10 +86,33 @@ OscilloscopeChannel::OscilloscopeChannel(
 	, m_xAxisUnit(xunit)
 	, m_yAxisUnit(yunit)
 {
+	SharedCtorInit();
+}
+
+void OscilloscopeChannel::SharedCtorInit()
+{
 	//Create a stream for our output.
 	//Normal channels only have one stream.
 	//Special instruments like SDRs with complex output, or filters/decodes, can have arbitrarily many.
 	AddStream("data");
+}
+
+/**
+	@brief Gives a channel a default display name if there's not one already.
+
+	MUST NOT be called until the channel has been added to its parent scope.
+ */
+void OscilloscopeChannel::SetDefaultDisplayName()
+{
+	//If we have a scope, m_displayname is ignored.
+	//Start out by pulling the name from hardware.
+	//If it's not set, use our hardware name as the default.
+	if(m_scope)
+	{
+		auto name = m_scope->GetChannelDisplayName(m_index);
+		if(name == "")
+			m_scope->SetChannelDisplayName(m_index, m_hwname);
+	}
 }
 
 OscilloscopeChannel::~OscilloscopeChannel()
@@ -233,6 +253,28 @@ void OscilloscopeChannel::SetDigitalThreshold(float level)
 {
 	if(m_scope)
 		m_scope->SetDigitalThreshold(m_index, level);
+}
+
+void OscilloscopeChannel::SetCenterFrequency(int64_t freq)
+{
+	if(m_scope)
+		m_scope->SetCenterFrequency(m_index, freq);
+}
+
+void OscilloscopeChannel::SetDisplayName(string name)
+{
+	if(m_scope)
+		m_scope->SetChannelDisplayName(m_index, name);
+	else
+		m_displayname = name;
+}
+
+string OscilloscopeChannel::GetDisplayName()
+{
+	if(m_scope)
+		return m_scope->GetChannelDisplayName(m_index);
+	else
+		return m_displayname;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -65,13 +65,21 @@ EyeWaveform::~EyeWaveform()
 
 void EyeWaveform::Normalize()
 {
-	//Normalize it
-	size_t len = m_width * m_height;
-
-	//Find the peak amplitude
+	//Preprocessing
 	int64_t nmax = 0;
-	for(size_t i=0; i<len; i++)
-		nmax = max(m_accumdata[i], nmax);
+	int64_t halfwidth = m_width/2;
+	size_t blocksize = halfwidth * sizeof(int64_t);
+	for(size_t y=0; y<m_height; y++)
+	{
+		int64_t* row = m_accumdata + y*m_width;
+
+		//Find peak amplitude
+		for(size_t x=halfwidth; x<m_width; x++)
+			nmax = max(row[x], nmax);
+
+		//Copy right half to left half
+		memcpy(row, row+halfwidth, blocksize);
+	}
 	if(nmax == 0)
 		nmax = 1;
 	float norm = 2.0f / nmax;
@@ -82,6 +90,7 @@ void EyeWaveform::Normalize()
 		2.0 means mapping values to [0, 2] and saturating anything above 1.
 	 */
 	norm *= m_saturationLevel;
+	size_t len = m_width * m_height;
 	for(size_t i=0; i<len; i++)
 		m_outdata[i] = min(1.0f, m_accumdata[i] * norm);
 }
@@ -89,30 +98,53 @@ void EyeWaveform::Normalize()
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-EyePattern::EyePattern(string color)
+EyePattern::EyePattern(const string& color)
 	: Filter(OscilloscopeChannel::CHANNEL_TYPE_EYE, color, CAT_ANALYSIS)
 	, m_height(1)
 	, m_width(1)
 	, m_xoff(0)
 	, m_xscale(0)
+	, m_lastClockAlign(ALIGN_CENTER)
+	, m_saturationName("Saturation Level")
+	, m_centerName("Center Voltage")
+	, m_maskName("Mask")
+	, m_polarityName("Clock Edge")
+	, m_vmodeName("Vertical Scale Mode")
+	, m_rangeName("Vertical Range")
+	, m_clockAlignName("Clock Alignment")
 {
 	//Set up channels
 	CreateInput("din");
 	CreateInput("clk");
 
-	m_saturationName = "Saturation Level";
 	m_parameters[m_saturationName] = FilterParameter(FilterParameter::TYPE_FLOAT, Unit(Unit::UNIT_COUNTS));
 	m_parameters[m_saturationName].SetFloatVal(1);
 
-	m_centerName = "Center Voltage";
 	m_parameters[m_centerName] = FilterParameter(FilterParameter::TYPE_FLOAT, Unit(Unit::UNIT_VOLTS));
 	m_parameters[m_centerName].SetFloatVal(0);
 
-	m_maskName = "Mask";
 	m_parameters[m_maskName] = FilterParameter(FilterParameter::TYPE_FILENAME, Unit(Unit::UNIT_COUNTS));
 	m_parameters[m_maskName].SetFileName("");
 	m_parameters[m_maskName].m_fileFilterMask = "*.yml";
 	m_parameters[m_maskName].m_fileFilterName = "YAML files (*.yml)";
+
+	m_parameters[m_polarityName] = FilterParameter(FilterParameter::TYPE_ENUM, Unit(Unit::UNIT_COUNTS));
+	m_parameters[m_polarityName].AddEnumValue("Rising", CLOCK_RISING);
+	m_parameters[m_polarityName].AddEnumValue("Falling", CLOCK_FALLING);
+	m_parameters[m_polarityName].AddEnumValue("Both", CLOCK_BOTH);
+	m_parameters[m_polarityName].SetIntVal(CLOCK_BOTH);
+
+	m_parameters[m_vmodeName] = FilterParameter(FilterParameter::TYPE_ENUM, Unit(Unit::UNIT_COUNTS));
+	m_parameters[m_vmodeName].AddEnumValue("Auto", RANGE_AUTO);
+	m_parameters[m_vmodeName].AddEnumValue("Fixed", RANGE_FIXED);
+
+	m_parameters[m_rangeName] = FilterParameter(FilterParameter::TYPE_FLOAT, Unit(Unit::UNIT_VOLTS));
+	m_parameters[m_rangeName].SetFloatVal(0.25);
+
+	m_parameters[m_clockAlignName] = FilterParameter(FilterParameter::TYPE_ENUM, Unit(Unit::UNIT_COUNTS));
+	m_parameters[m_clockAlignName].AddEnumValue("Center", ALIGN_CENTER);
+	m_parameters[m_clockAlignName].AddEnumValue("Edge", ALIGN_EDGE);
+	m_parameters[m_clockAlignName].SetIntVal(ALIGN_CENTER);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -161,7 +193,10 @@ bool EyePattern::NeedsConfig()
 
 double EyePattern::GetVoltageRange()
 {
-	return m_inputs[0].m_channel->GetVoltageRange();
+	if(m_parameters[m_vmodeName].GetIntVal() == RANGE_AUTO)
+		return m_inputs[0].m_channel->GetVoltageRange();
+	else
+		return m_parameters[m_rangeName].GetFloatVal();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -341,7 +376,6 @@ void EyePattern::Refresh()
 	//Get the input data
 	auto waveform = GetAnalogInputWaveform(0);
 	auto clock = GetDigitalInputWaveform(1);
-	size_t cend = clock->m_samples.size();
 	double start = GetTime();
 
 	//If center of the eye was changed, reset existing eye data
@@ -351,9 +385,18 @@ void EyePattern::Refresh()
 	{
 		if(abs(cap->GetCenterVoltage() - center) > 0.001)
 		{
-			delete cap;
+			SetData(NULL, 0);
 			cap = NULL;
 		}
+	}
+
+	//If clock alignment was changed, reset existing eye data
+	ClockAlignment clock_align = static_cast<ClockAlignment>(m_parameters[m_clockAlignName].GetIntVal());
+	if(m_lastClockAlign != clock_align)
+	{
+		SetData(NULL, 0);
+		cap = NULL;
+		m_lastClockAlign = clock_align;
 	}
 
 	//Load the mask, if needed
@@ -364,103 +407,125 @@ void EyePattern::Refresh()
 	//Initialize the capture
 	//TODO: timestamps? do we need those?
 	if(cap == NULL)
-		cap = new EyeWaveform(m_width, m_height, center);
+		cap = ReallocateWaveform();
 	cap->m_saturationLevel = m_parameters[m_saturationName].GetFloatVal();
-	cap->m_timescale = 1;
 	int64_t* data = cap->GetAccumData();
 
-	//Calculate average period of the clock
-	//TODO: All of this code assumes a fully RLE'd clock with one sample per toggle.
-	//We probably need a preprocessing filter to handle analog etc clock sources.
-	if(cap->m_uiWidth < FLT_EPSILON)
+	//Find all toggles in the clock
+	vector<int64_t> clock_edges;
+	switch(m_parameters[m_polarityName].GetIntVal())
 	{
-		double tlastclk = clock->m_offsets[cend-1] + clock->m_durations[cend-1];
-		cap->m_uiWidth = tlastclk / cend;
+		case CLOCK_RISING:
+			FindRisingEdges(clock, clock_edges);
+			break;
+
+		case CLOCK_FALLING:
+			FindFallingEdges(clock, clock_edges);
+			break;
+
+		case CLOCK_BOTH:
+			FindZeroCrossings(clock, clock_edges);
+			break;
 	}
 
-	//Process the eye
-	size_t iclock = 0;
-	float yscale = m_height / m_inputs[0].m_channel->GetVoltageRange();
+	//Calculate the nominal UI width
+	if(cap->m_uiWidth < FLT_EPSILON)
+		RecalculateUIWidth();
+
+	//Shift the clock by half a UI if it's edge aligned
+	//All of the eye creation logic assumes a center aligned clock.
+	if(clock_align == ALIGN_EDGE)
+	{
+		for(size_t i=0; i<clock_edges.size(); i++)
+			clock_edges[i] += cap->m_uiWidth / 2;
+	}
+
+	uint32_t prng = 0xdeadbeef;
+
+	//Precompute some scaling factors
+	float yscale = m_height / GetVoltageRange();
 	float ymid = m_height / 2;
 	float yoff = -center*yscale + ymid;
+	float xtimescale = waveform->m_timescale * m_xscale;
+	float xscale_div255 = m_xscale / 255.0f;
+	float xscale_div2 = m_xscale / 2;
+
+	//Process the eye
+	size_t cend = clock_edges.size() - 1;
+	size_t iclock = 0;
 	size_t wend = waveform->m_samples.size()-1;
-	for(size_t i=0; i<wend; i++)
+	size_t ymax = m_height - 1;
+	size_t xmax = m_width - 1;
+	if(m_xscale > FLT_EPSILON)
 	{
-		//If scale isn't defined yet, early out
-		if(m_xscale < FLT_EPSILON)
-			break;
-
-		//Stop when we get to the end of the clock
-		if(iclock + 1 >= cend)
-			break;
-
-		//Find time of this sample.
-		//If it's past the end of the current UI, move to the next clock edge
-		int64_t twidth = clock->m_durations[iclock];
-		int64_t tstart = waveform->m_offsets[i] * waveform->m_timescale + waveform->m_triggerPhase;
-		int64_t offset = tstart - clock->m_offsets[iclock] * clock->m_timescale;
-		if(offset < -10)
-			continue;
-		if(offset > twidth)
+		for(size_t i=0; i<wend && iclock < cend; i++)
 		{
-			iclock ++;
-			if(iclock + 1 >= cend)
-				break;
-			offset = tstart - clock->m_offsets[iclock+1] * clock->m_timescale;
-		}
-
-		//LogDebug("%zu, %zd\n", i, offset);
-
-		//Interpolate voltage
-		int64_t dt = (waveform->m_offsets[i+1] - waveform->m_offsets[i]) * waveform->m_timescale;
-		float pixel_x_f = (offset - m_xoff) * m_xscale;
-		float pixel_x_fround = floor(pixel_x_f);
-		float dv = waveform->m_samples[i+1] - waveform->m_samples[i];
-		float dx_frac = (pixel_x_f - pixel_x_fround ) / (dt * m_xscale );
-		float nominal_voltage = waveform->m_samples[i] + dv*dx_frac;
-
-		//Antialiasing: jitter the fractional X position by up to 1ps to fill in blank spots
-		pixel_x_f -= m_xscale * 0.5;
-		pixel_x_f += (rand() & 0xff) * m_xscale / 255.0f;
-
-		//LogDebug("%zu, %zd, %f\n", i, offset, pixel_x_f);
-
-		//Find (and sanity check) the Y coordinate
-		float nominal_pixel_y = nominal_voltage*yscale + yoff;
-		size_t y1 = static_cast<size_t>(nominal_pixel_y);
-		if(y1 >= (m_height-1))
-			continue;
-
-		//Calculate how much of the pixel's intensity to put in each row
-		float yfrac = nominal_pixel_y - y1;
-		int bin2 = yfrac * 64;
-		int bin1 = 64 - bin2;
-		int64_t* row1 = data + y1*m_width;
-		int64_t* row2 = row1 + m_width;
-
-		//Plot each point 3 times for center/left/right portions of the eye
-		int64_t pixel_x_round = round(pixel_x_f);
-		int64_t pixel_x_round2 = round(pixel_x_f + m_xscale*cap->m_uiWidth);
-		int64_t pixel_x_round3 = round(pixel_x_f - m_xscale*cap->m_uiWidth);
-		int64_t xpos[] = { pixel_x_round, pixel_x_round2, pixel_x_round3 };
-		int64_t w = m_width;
-		for(auto x : xpos)
-		{
-			if( (x+1 < w) && (x >= 0) )
+			//Find time of this sample.
+			//If it's past the end of the current UI, move to the next clock edge
+			int64_t tstart = waveform->m_offsets[i] * waveform->m_timescale + waveform->m_triggerPhase;
+			int64_t offset = tstart - clock_edges[iclock];
+			if(offset < 0)
+				continue;
+			size_t nextclk = iclock + 1;
+			int64_t tnext = clock_edges[nextclk];
+			if(tstart >= tnext)
 			{
-				row1[x+0] += bin1 * dx_frac;
-				row1[x+1] += bin1 * (1-dx_frac);
-				row2[x+0] += bin2 * dx_frac;
-				row2[x+1] += bin2 * (1-dx_frac);
+				//Move to the next clock edge
+				iclock ++;
+				if(iclock >= cend)
+					break;
+
+				//Figure out the offset to the next edge
+				offset = tstart - tnext;
 			}
+
+			//Antialiasing: jitter the fractional X position by up to 1ps to fill in blank spots
+			int64_t dt = waveform->m_offsets[i+1] - waveform->m_offsets[i];
+			float pixel_x_f = (offset - m_xoff) * m_xscale;
+			float pixel_x_fround = floor(pixel_x_f);
+			float dx_frac = (pixel_x_f - pixel_x_fround ) / (dt * xtimescale );
+			pixel_x_f += (prng & 0xff) * xscale_div255 - xscale_div2;
+			prng = 0x343fd * prng + 0x269ec3;
+
+			//Early out if off end of plot
+			size_t pixel_x_round = floor(pixel_x_f);
+			if(pixel_x_round > xmax)
+				continue;
+
+			//Interpolate voltage, early out if clipping
+			float dv = waveform->m_samples[i+1] - waveform->m_samples[i];
+			float nominal_voltage = waveform->m_samples[i] + dv*dx_frac;
+			float nominal_pixel_y = nominal_voltage*yscale + yoff;
+			size_t y1 = static_cast<size_t>(nominal_pixel_y);
+			if(y1 >= ymax)
+				continue;
+
+			//Calculate how much of the pixel's intensity to put in each row
+			float yfrac = nominal_pixel_y - floor(nominal_pixel_y);
+			int64_t bin2 = yfrac * 64;
+			int64_t* pix = data + y1*m_width + pixel_x_round;
+
+			//Plot each point (this only draws the right half of the eye, we copy to the left later)
+			pix[0] 		 += 64 - bin2;
+			pix[m_width] += bin2;
 		}
 	}
-	fflush(stdout);
+
+	//Rightmost picosecond of the eye has some rounding artifacts.
+	//For now, just replace it with the value from 1ps to its left.
+	size_t delta = ceil(m_xscale);
+	size_t xstart = xmax - delta;
+	size_t xend = xmax;
+	for(size_t y=0; y<m_height; y++)
+	{
+		int64_t* row = data + y*m_width;
+		for(size_t x=xstart; x<=xend; x++)
+			row[x] = row[x-delta];
+	}
 
 	//Count total number of UIs we've integrated
-	cap->IntegrateUIs(clock->m_samples.size());
+	cap->IntegrateUIs(clock_edges.size());
 	cap->Normalize();
-	SetData(cap, 0);
 
 	//If we have an eye mask, prepare it for processing
 	if(m_mask.GetFileName() != "")
@@ -470,6 +535,64 @@ void EyePattern::Refresh()
 	total_frames ++;
 	total_time += dt;
 	LogTrace("Refresh took %.3f ms (avg %.3f)\n", dt * 1000, (total_time * 1000) / total_frames);
+}
+
+EyeWaveform* EyePattern::ReallocateWaveform()
+{
+	auto cap = new EyeWaveform(m_width, m_height, m_parameters[m_centerName].GetFloatVal());
+	cap->m_timescale = 1;
+	SetData(cap, 0);
+	return cap;
+}
+
+void EyePattern::RecalculateUIWidth()
+{
+	auto cap = dynamic_cast<EyeWaveform*>(GetData(0));
+	if(!cap)
+		cap = ReallocateWaveform();
+
+	auto clock = GetDigitalInputWaveform(1);
+	if(!clock)
+		return;
+
+	//Find all toggles in the clock
+	vector<int64_t> clock_edges;
+	switch(m_parameters[m_polarityName].GetIntVal())
+	{
+		case CLOCK_RISING:
+			FindRisingEdges(clock, clock_edges);
+			break;
+
+		case CLOCK_FALLING:
+			FindFallingEdges(clock, clock_edges);
+			break;
+
+		case CLOCK_BOTH:
+			FindZeroCrossings(clock, clock_edges);
+			break;
+	}
+
+	//Find width of each UI
+	vector<int64_t> ui_widths;
+	for(size_t i=0; i<clock_edges.size()-1; i++)
+		ui_widths.push_back(clock_edges[i+1] - clock_edges[i]);
+
+	//Need to average at least ten UIs to get meaningful data
+	size_t nuis = ui_widths.size();
+	if(nuis > 10)
+	{
+		//Sort, discard the top and bottom 10%, and average the rest to calculate nominal width
+		sort(ui_widths.begin(), ui_widths.end());
+		size_t navg = 0;
+		int64_t total = 0;
+		for(size_t i = nuis/10; i <= nuis*9/10; i++)
+		{
+			total += ui_widths[i];
+			navg ++;
+		}
+
+		cap->m_uiWidth = (1.0 * total) / navg;
+	}
 }
 
 /**
@@ -494,7 +617,7 @@ void EyePattern::DoMaskTest(EyeWaveform* cap)
 	cr->fill();
 
 	//Software rendering
-	float yscale = m_height / m_inputs[0].m_channel->GetVoltageRange();
+	float yscale = m_height / GetVoltageRange();
 	m_mask.RenderForAnalysis(
 		cr,
 		cap,
@@ -508,11 +631,12 @@ void EyePattern::DoMaskTest(EyeWaveform* cap)
 
 	//Test each pixel of the eye pattern against the mask
 	uint32_t* data = reinterpret_cast<uint32_t*>(surface->get_data());
+	int stride = surface->get_stride() / sizeof(uint32_t);
 	size_t total = 0;
 	size_t hits = 0;
 	for(size_t y=0; y<m_height; y++)
 	{
-		auto row = data + (y*m_width);
+		auto row = data + (y*stride);
 		auto eyerow = accum + (y*m_width);
 		for(size_t x=0; x<m_width; x++)
 		{

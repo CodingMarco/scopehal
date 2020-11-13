@@ -68,7 +68,7 @@ public:
 class PacketDecoder : public Filter
 {
 public:
-	PacketDecoder(OscilloscopeChannel::ChannelType type, std::string color, Filter::Category cat);
+	PacketDecoder(OscilloscopeChannel::ChannelType type, const std::string& color, Filter::Category cat);
 	virtual ~PacketDecoder();
 
 	const std::vector<Packet*>& GetPackets()
@@ -79,28 +79,28 @@ public:
 	virtual bool GetShowDataColumn();
 	virtual bool GetShowImageColumn();
 
-	virtual Packet* CreateMergedHeader(Packet* pack);
-	virtual bool CanMerge(Packet* a, Packet* b);
+	virtual Packet* CreateMergedHeader(Packet* pack, size_t i);
+	virtual bool CanMerge(Packet* first, Packet* cur, Packet* next);
 
 	/**
 		@brief Standard colors for protocol analyzer lines.
 
 		Do not change ordering, add new items to the end only.
 	 */
-	enum
+	enum PacketColor
 	{
-		COLOR_DEFAULT,			//Default color if not otherwise specified
-		COLOR_ERROR,			//Malformed packets, or packets indicating an error condition
-		COLOR_STATUS,			//Reading or writing status registers
-		COLOR_CONTROL,			//Reading or writing control registers
-		COLOR_DATA_READ,		//Reading unspecified data
-		COLOR_DATA_WRITE,		//Writing unspecified data
-		COLOR_COMMAND,			//Executing commands of some sort
+		PROTO_COLOR_DEFAULT,		//Default color if not otherwise specified
+		PROTO_COLOR_ERROR,			//Malformed packets, or packets indicating an error condition
+		PROTO_COLOR_STATUS,			//Reading or writing status registers
+		PROTO_COLOR_CONTROL,		//Reading or writing control registers
+		PROTO_COLOR_DATA_READ,		//Reading unspecified data
+		PROTO_COLOR_DATA_WRITE,		//Writing unspecified data
+		PROTO_COLOR_COMMAND,		//Executing commands of some sort
 
-		STANDARD_COLOR_COUNT
-	} standard_color;
+		PROTO_STANDARD_COLOR_COUNT
+	};
 
-	static Gdk::Color m_backgroundColors[STANDARD_COLOR_COUNT];
+	static Gdk::Color m_backgroundColors[PROTO_STANDARD_COLOR_COUNT];
 
 protected:
 	void ClearPackets();

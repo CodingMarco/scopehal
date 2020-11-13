@@ -73,7 +73,7 @@ typedef Waveform<I2CEepromSymbol> I2CEepromWaveform;
 class I2CEepromDecoder : public PacketDecoder
 {
 public:
-	I2CEepromDecoder(std::string color);
+	I2CEepromDecoder(const std::string& color);
 
 	virtual std::string GetText(int i);
 	virtual Gdk::Color GetColor(int i);
@@ -91,8 +91,8 @@ public:
 	virtual double GetVoltageRange();
 	virtual bool ValidateChannel(size_t i, StreamDescriptor stream);
 
-	bool CanMerge(Packet* a, Packet* b);
-	Packet* CreateMergedHeader(Packet* pack);
+	bool CanMerge(Packet* first, Packet* cur, Packet* next);
+	Packet* CreateMergedHeader(Packet* pack, size_t i);
 
 	PROTOCOL_DECODER_INITPROC(I2CEepromDecoder)
 

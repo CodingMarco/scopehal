@@ -62,17 +62,17 @@ public:
 
 	OscilloscopeChannel(
 		Oscilloscope* scope,
-		std::string hwname,
+		const std::string& hwname,
 		OscilloscopeChannel::ChannelType type,
-		std::string color,
+		const std::string& color,
 		int width = 1,
 		size_t index = 0,
 		bool physical = false);
 	OscilloscopeChannel(
 		Oscilloscope* scope,
-		std::string hwname,
+		const std::string& hwname,
 		OscilloscopeChannel::ChannelType type,
-		std::string color,
+		const std::string& color,
 		Unit xunit,
 		Unit yunit,
 		int width = 1,
@@ -82,9 +82,6 @@ public:
 
 	///Display color (any valid GDK format)
 	std::string m_displaycolor;
-
-	///Display name (user defined, defaults to m_hwname)
-	std::string m_displayname;
 
 	//Stuff here is set once at init and can't be changed
 	ChannelType GetType()
@@ -135,6 +132,9 @@ public:
 	size_t GetRefCount()
 	{ return m_refcount; }
 
+	void SetDisplayName(std::string name);
+	std::string GetDisplayName();
+
 	//Hardware configuration
 public:
 	bool IsEnabled();
@@ -143,7 +143,8 @@ public:
 	void Enable();
 	void Disable();
 
-	//These functions are preferred in GUI or other environments with multiple loads
+	//These functions are preferred in GUI or other environments with multiple consumers of waveform data.
+	//The channel is reference counted and only turned off when all consumers have released it.
 	virtual void AddRef();
 	virtual void Release();
 
@@ -186,7 +187,11 @@ public:
 	void SetDigitalHysteresis(float level);
 	void SetDigitalThreshold(float level);
 
+	void SetCenterFrequency(int64_t freq);
+
+	void SetDefaultDisplayName();
 protected:
+	void SharedCtorInit();
 
 	/**
 		@brief Clears out any existing streams
@@ -200,12 +205,24 @@ protected:
 	/**
 		@brief Adds a new data stream to the channel
 	 */
-	void AddStream(std::string name)
+	void AddStream(const std::string& name)
 	{
 		m_streamNames.push_back(name);
 		m_streamData.push_back(NULL);
 	}
 
+	/**
+		@brief Display name (user defined, defaults to m_hwname)
+
+		This is ONLY used if m_scope is NULL.
+	 */
+	std::string m_displayname;
+
+	/**
+		@brief The oscilloscope (if any) we are part of.
+
+		Note that filters and other special channels are not attached to a scope.
+	 */
 	Oscilloscope* m_scope;
 
 	///Channel type

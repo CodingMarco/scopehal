@@ -34,6 +34,7 @@
 
 class DropoutTrigger;
 class EdgeTrigger;
+class GlitchTrigger;
 class PulseWidthTrigger;
 class RuntTrigger;
 class SlewRateTrigger;
@@ -53,6 +54,10 @@ class LeCroyOscilloscope
 public:
 	LeCroyOscilloscope(SCPITransport* transport);
 	virtual ~LeCroyOscilloscope();
+
+	//not copyable or assignable
+	LeCroyOscilloscope(const LeCroyOscilloscope& rhs) =delete;
+	LeCroyOscilloscope& operator=(const LeCroyOscilloscope& rhs) =delete;
 
 protected:
 	void IdentifyHardware();
@@ -74,6 +79,7 @@ public:
 	//Channel configuration
 	virtual bool IsChannelEnabled(size_t i);
 	virtual void EnableChannel(size_t i);
+	virtual bool CanEnableChannel(size_t i);
 	virtual void DisableChannel(size_t i);
 	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i);
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type);
@@ -86,6 +92,9 @@ public:
 	virtual OscilloscopeChannel* GetExternalTrigger();
 	virtual double GetChannelOffset(size_t i);
 	virtual void SetChannelOffset(size_t i, double offset);
+	virtual std::string GetChannelDisplayName(size_t i);
+	virtual void SetChannelDisplayName(size_t i, std::string name);
+	virtual std::vector<unsigned int> GetChannelBandwidthLimiters(size_t i);
 
 	//Triggering
 	virtual Oscilloscope::TriggerMode PollTrigger();
@@ -99,13 +108,6 @@ public:
 	virtual void EnableTriggerOutput();
 	virtual std::vector<std::string> GetTriggerTypes();
 
-	//DMM acquisition
-	virtual double GetVoltage();
-	virtual double GetPeakToPeak();
-	virtual double GetFrequency();
-	virtual double GetCurrent();
-	virtual double GetTemperature();
-
 	//DMM configuration
 	virtual int GetMeterChannelCount();
 	virtual std::string GetMeterChannelName(int chan);
@@ -115,9 +117,10 @@ public:
 	virtual void StopMeter();
 	virtual void SetMeterAutoRange(bool enable);
 	virtual bool GetMeterAutoRange();
-
+	virtual double GetMeterValue();
 	virtual Multimeter::MeasurementTypes GetMeterMode();
 	virtual void SetMeterMode(Multimeter::MeasurementTypes type);
+	virtual int GetMeterDigits();
 
 	//Function generator
 	virtual int GetFunctionChannelCount();
@@ -140,7 +143,7 @@ public:
 	virtual void SetFunctionChannelFallTime(int chan, float sec);
 
 	//Scope models.
-	//We only distinguish down to the series of scope, exact SKU is irrelevant.
+	//We only distinguish down to the series of scope, exact SKU is mostly irrelevant.
 	enum Model
 	{
 		MODEL_DDA_5K,
@@ -207,6 +210,7 @@ public:
 protected:
 	void PullDropoutTrigger();
 	void PullEdgeTrigger();
+	void PullGlitchTrigger();
 	void PullPulseWidthTrigger();
 	void PullRuntTrigger();
 	void PullSlewRateTrigger();
@@ -218,9 +222,10 @@ protected:
 	Trigger::Condition GetCondition(std::string reply);
 
 	void PushDropoutTrigger(DropoutTrigger* trig);
-	void PushEdgeTrigger(EdgeTrigger* trig, std::string tree);
-	void PushCondition(std::string path, Trigger::Condition cond);
-	void PushPatternCondition(std::string path, Trigger::Condition cond);
+	void PushEdgeTrigger(EdgeTrigger* trig, const std::string& tree);
+	void PushGlitchTrigger(GlitchTrigger* trig);
+	void PushCondition(const std::string& path, Trigger::Condition cond);
+	void PushPatternCondition(const std::string& path, Trigger::Condition cond);
 	void PushFloat(std::string path, float f);
 	void PushPulseWidthTrigger(PulseWidthTrigger* trig);
 	void PushRuntTrigger(RuntTrigger* trig);
@@ -229,6 +234,8 @@ protected:
 	void PushWindowTrigger(WindowTrigger* trig);
 
 	void BulkCheckChannelEnableState();
+
+	std::string GetPossiblyEmptyString(const std::string& property);
 
 	bool ReadWaveformBlock(std::string& data);
 	bool ReadWavedescs(
@@ -257,6 +264,7 @@ protected:
 	//hardware analog channel count, independent of LA option etc
 	unsigned int m_analogChannelCount;
 	unsigned int m_digitalChannelCount;
+	size_t m_digitalChannelBase;
 
 	Model m_modelid;
 
@@ -269,6 +277,9 @@ protected:
 	bool m_hasI2cTrigger;
 	bool m_hasSpiTrigger;
 	bool m_hasUartTrigger;
+
+	///Maximum bandwidth we support, in MHz
+	unsigned int m_maxBandwidth;
 
 	bool m_triggerArmed;
 	bool m_triggerOneShot;
@@ -286,6 +297,8 @@ protected:
 	std::map<size_t, int64_t> m_channelDeskew;
 	bool m_interleaving;
 	bool m_interleavingValid;
+	Multimeter::MeasurementTypes m_meterMode;
+	bool m_meterModeValid;
 
 	//True if we have >8 bit capture depth
 	bool m_highDefinition;

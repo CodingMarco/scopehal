@@ -108,7 +108,7 @@ typedef Waveform<SPIFlashSymbol> SPIFlashWaveform;
 class SPIFlashDecoder : public PacketDecoder
 {
 public:
-	SPIFlashDecoder(std::string color);
+	SPIFlashDecoder(const std::string& color);
 
 	virtual std::string GetText(int i);
 	virtual Gdk::Color GetColor(int i);
@@ -138,8 +138,8 @@ public:
 		FLASH_TYPE_WINBOND_W25N
 	};
 
-	virtual bool CanMerge(Packet* a, Packet* b);
-	virtual Packet* CreateMergedHeader(Packet* pack);
+	virtual bool CanMerge(Packet* first, Packet* cur, Packet* next);
+	virtual Packet* CreateMergedHeader(Packet* pack, size_t i);
 
 	PROTOCOL_DECODER_INITPROC(SPIFlashDecoder)
 

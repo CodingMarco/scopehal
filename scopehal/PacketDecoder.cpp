@@ -33,23 +33,25 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Color schemes
 
-Gdk::Color PacketDecoder::m_backgroundColors[STANDARD_COLOR_COUNT] =
+Gdk::Color PacketDecoder::m_backgroundColors[PROTO_STANDARD_COLOR_COUNT] =
 {
-	Gdk::Color("#101010"),		//COLOR_DEFAULT
-	Gdk::Color("#800000"),		//COLOR_ERROR
-	Gdk::Color("#000080"),		//COLOR_STATUS
-	Gdk::Color("#808000"),		//COLOR_CONTROL
-	Gdk::Color("#336699"),		//COLOR_DATA_READ
-	Gdk::Color("#339966"),		//COLOR_DATA_WRITE
-	Gdk::Color("#600050"),		//COLOR_COMMAND
+	Gdk::Color("#101010"),		//PROTO_COLOR_DEFAULT
+	Gdk::Color("#800000"),		//PROTO_COLOR_ERROR
+	Gdk::Color("#000080"),		//PROTO_COLOR_STATUS
+	Gdk::Color("#808000"),		//PROTO_COLOR_CONTROL
+	Gdk::Color("#336699"),		//PROTO_COLOR_DATA_READ
+	Gdk::Color("#339966"),		//PROTO_COLOR_DATA_WRITE
+	Gdk::Color("#600050"),		//PROTO_COLOR_COMMAND
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Packet
 
 Packet::Packet()
-	: m_displayForegroundColor(Gdk::Color("#ffffff"))
-	, m_displayBackgroundColor(PacketDecoder::m_backgroundColors[PacketDecoder::COLOR_DEFAULT])
+	: m_offset(0)
+	, m_len(0)
+	, m_displayForegroundColor(Gdk::Color("#ffffff"))
+	, m_displayBackgroundColor(PacketDecoder::m_backgroundColors[PacketDecoder::PROTO_COLOR_DEFAULT])
 {
 }
 
@@ -60,7 +62,7 @@ Packet::~Packet()
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-PacketDecoder::PacketDecoder(OscilloscopeChannel::ChannelType type, std::string color, Category cat)
+PacketDecoder::PacketDecoder(OscilloscopeChannel::ChannelType type, const std::string& color, Category cat)
 	: Filter(type, color, cat)
 {
 }
@@ -88,26 +90,30 @@ bool PacketDecoder::GetShowImageColumn()
 }
 
 /**
-	@brief Checks if two packets can be merged under a single heading in the protocol analyzer view.
+	@brief Checks if multiple packets can be merged under a single heading in the protocol analyzer view.
 
 	This can be used to collapse polling loops, acknowledgements, etc in order to minimize clutter in the view.
 
 	The default implementation in PacketDecoder always returns false so packets are not merged.
 
-	@param a Packet 1
-	@param b Packet 2
+	@param first		The first packet in the merge group
+	@param cur			The most recently merged packet
+	@param next			The candidate packet to be merged
 
 	@return true if packets can be merged, false otherwise
  */
-bool PacketDecoder::CanMerge(Packet* /*a*/, Packet* /*b*/)
+bool PacketDecoder::CanMerge(Packet* /*first*/, Packet* /*cur*/, Packet* /*next*/)
 {
 	return false;
 }
 
 /**
 	@brief Creates a summary packet for one or more merged packets
+
+	@param pack		The first packet in the merge string
+	@param i		Index of pack within m_packets
  */
-Packet* PacketDecoder::CreateMergedHeader(Packet* /*pack*/)
+Packet* PacketDecoder::CreateMergedHeader(Packet* /*pack*/, size_t /*i*/)
 {
 	return NULL;
 }

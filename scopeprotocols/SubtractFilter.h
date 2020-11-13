@@ -38,7 +38,7 @@
 class SubtractFilter : public Filter
 {
 public:
-	SubtractFilter(std::string color);
+	SubtractFilter(const std::string& color);
 
 	virtual void Refresh();
 
@@ -48,6 +48,7 @@ public:
 	static std::string GetProtocolName();
 	virtual void SetDefaultName();
 
+	virtual double GetOffset();
 	virtual double GetVoltageRange();
 
 	virtual bool ValidateChannel(size_t i, StreamDescriptor stream);

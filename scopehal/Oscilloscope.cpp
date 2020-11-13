@@ -120,17 +120,17 @@ OscilloscopeChannel* Oscilloscope::GetChannel(size_t i)
 		return NULL;
 }
 
-OscilloscopeChannel* Oscilloscope::GetChannelByDisplayName(string name)
+OscilloscopeChannel* Oscilloscope::GetChannelByDisplayName(const string& name)
 {
 	for(auto c : m_channels)
 	{
-		if(c->m_displayname == name)
+		if(c->GetDisplayName() == name)
 			return c;
 	}
 	return NULL;
 }
 
-OscilloscopeChannel* Oscilloscope::GetChannelByHwName(string name)
+OscilloscopeChannel* Oscilloscope::GetChannelByHwName(const string& name)
 {
 	for(auto c : m_channels)
 	{
@@ -138,6 +138,11 @@ OscilloscopeChannel* Oscilloscope::GetChannelByHwName(string name)
 			return c;
 	}
 	return NULL;
+}
+
+bool Oscilloscope::CanEnableChannel(size_t /*i*/)
+{
+	return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -246,7 +251,7 @@ string Oscilloscope::SerializeConfiguration(IDTable& table)
 		config += tmp;
 		snprintf(tmp, sizeof(tmp), "                color:       \"%s\"\n", chan->m_displaycolor.c_str());
 		config += tmp;
-		snprintf(tmp, sizeof(tmp), "                nick:        \"%s\"\n", chan->m_displayname.c_str());
+		snprintf(tmp, sizeof(tmp), "                nick:        \"%s\"\n", chan->GetDisplayName().c_str());
 		config += tmp;
 		snprintf(tmp, sizeof(tmp), "                name:        \"%s\"\n", chan->GetHwname().c_str());
 		config += tmp;
@@ -330,7 +335,7 @@ void Oscilloscope::LoadConfiguration(const YAML::Node& node, IDTable& table)
 		//These are only needed for offline scopes to create a representation of the original instrument.
 
 		chan->m_displaycolor = cnode["color"].as<string>();
-		chan->m_displayname = cnode["nick"].as<string>();
+		chan->SetDisplayName(cnode["nick"].as<string>());
 
 		if(cnode["enabled"].as<int>())
 			chan->Enable();
@@ -397,6 +402,23 @@ bool Oscilloscope::CanInterleave()
 	return true;
 }
 
+void Oscilloscope::SetChannelDisplayName(size_t i, string name)
+{
+	m_channelDisplayNames[m_channels[i]] = name;
+}
+
+string Oscilloscope::GetChannelDisplayName(size_t i)
+{
+	return m_channelDisplayNames[m_channels[i]];
+}
+
+vector<unsigned int> Oscilloscope::GetChannelBandwidthLimiters(size_t /*i*/)
+{
+	vector<unsigned int> ret;
+	ret.push_back(0);
+	return ret;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Logic analyzer configuration (default no-op for scopes without MSO feature)
 
@@ -447,4 +469,39 @@ vector<string> Oscilloscope::GetTriggerTypes()
 	vector<string> ret;
 	ret.push_back(EdgeTrigger::GetTriggerName());
 	return ret;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Spectrum analyzer configuration (default no-op for scopes without SA feature)
+
+void Oscilloscope::SetSpan(int64_t /*span*/)
+{
+}
+
+int64_t Oscilloscope::GetSpan()
+{
+	return 1;
+}
+
+void Oscilloscope::SetCenterFrequency(size_t /*channel*/, int64_t /*freq*/)
+{
+}
+
+int64_t Oscilloscope::GetCenterFrequency(size_t /*channel*/)
+{
+	return 0;
+}
+
+void Oscilloscope::SetResolutionBandwidth(int64_t /*freq*/)
+{
+}
+
+int64_t Oscilloscope::GetResolutionBandwidth()
+{
+	return 1;
+}
+
+bool Oscilloscope::HasFrequencyControls()
+{
+	return false;
 }

@@ -7,36 +7,39 @@
 #ifndef CANDecoder_h
 #define CANDecoder_h
 
+#include "PacketDecoder.h"
+
 class CANSymbol
 {
 public:
 	enum stype
 	{
 		TYPE_SOF,
-		TYPE_SID,
+		TYPE_ID,
 		TYPE_RTR,
-		TYPE_IDE,
 		TYPE_R0,
+		TYPE_FD,
 		TYPE_DLC,
 		TYPE_DATA,
-		TYPE_CRC,
-		TYPE_IDLE
+		TYPE_CRC_OK,
+		TYPE_CRC_BAD,
+		TYPE_CRC_DELIM,
+		TYPE_ACK,
+		TYPE_ACK_DELIM,
+		TYPE_EOF
 	};
 
 	CANSymbol()
 	{}
 
-	CANSymbol(stype t, uint8_t *data, size_t size)
+	CANSymbol(stype t, uint32_t data)
 	 : m_stype(t)
+	 , m_data(data)
 	{
-		for (uint8_t i = 0; i < size; i++)
-		{
-			m_data.push_back(data[i]);
-		}
 	}
 
 	stype m_stype;
-	std::vector<uint8_t> m_data;
+	uint32_t m_data;
 
 	bool operator== (const CANSymbol& s) const
 	{
@@ -46,10 +49,10 @@ public:
 
 typedef Waveform<CANSymbol> CANWaveform;
 
-class CANDecoder : public Filter
+class CANDecoder : public PacketDecoder
 {
 public:
-	CANDecoder(std::string color);
+	CANDecoder(const std::string& color);
 
 	virtual std::string GetText(int i);
 	virtual Gdk::Color GetColor(int i);
@@ -60,16 +63,14 @@ public:
 	static std::string GetProtocolName();
 	virtual void SetDefaultName();
 
+	std::vector<std::string> GetHeaders();
+
 	virtual bool ValidateChannel(size_t i, StreamDescriptor stream);
 
 	PROTOCOL_DECODER_INITPROC(CANDecoder)
 
 protected:
-	std::string m_tq;
-	std::string m_bs1, m_bs2;
-
-	// Nominal Bit Time, in ns
-	unsigned int m_nbt;
+	std::string m_baudrateName;
 };
 
 #endif

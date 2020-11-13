@@ -35,7 +35,7 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-ClockRecoveryFilter::ClockRecoveryFilter(string color)
+ClockRecoveryFilter::ClockRecoveryFilter(const string& color)
 	: Filter(OscilloscopeChannel::CHANNEL_TYPE_DIGITAL, color, CAT_CLOCK)
 {
 	//Set up channels
@@ -129,10 +129,19 @@ void ClockRecoveryFilter::Refresh()
 	auto din = GetAnalogInputWaveform(0);
 	auto gate = GetDigitalInputWaveform(1);
 
+	//Timestamps of the edges
+	vector<double> edges;
+	FindZeroCrossings(din, m_parameters[m_threshname].GetFloatVal(), edges);
+	if(edges.empty())
+	{
+		SetData(NULL, 0);
+		return;
+	}
+
 	//Convert nominal baud period to ps
 	//Round nominal period to nearest ps, but use the floating point value for the CDR PLL
 	float period = 1.0e12f / m_parameters[m_baudname].GetFloatVal();
-	int64_t ps = round(ps);
+	int64_t ps = round(period);
 	m_nominalPeriod = ps;
 
 	//Create the output waveform and copy our timescales
@@ -141,22 +150,6 @@ void ClockRecoveryFilter::Refresh()
 	cap->m_startPicoseconds = din->m_startPicoseconds;
 	cap->m_triggerPhase = 0;
 	cap->m_timescale = 1;		//recovered clock time scale is single picoseconds
-
-	double start = GetTime();
-
-	//Timestamps of the edges
-	vector<double> edges;
-	FindZeroCrossings(din, m_parameters[m_threshname].GetFloatVal(), edges);
-
-	if(edges.empty())
-	{
-		SetData(NULL, 0);
-		return;
-	}
-
-	double dt = GetTime() - start;
-	start = GetTime();
-	//LogTrace("Zero crossing: %.3f ms\n", dt * 1000);
 
 	//The actual PLL NCO
 	//TODO: use the real fibre channel PLL.
@@ -217,10 +210,7 @@ void ClockRecoveryFilter::Refresh()
 
 			//If the clock is currently gated, re-sync to the edge
 			if(was_gating && !gating)
-			{
 				edgepos = tnext + period;
-				delta = 0;
-			}
 
 			//Check sign of phase and do bang-bang feedback (constant shift regardless of error magnitude)
 			//If we skipped some edges, apply a larger correction
@@ -251,10 +241,6 @@ void ClockRecoveryFilter::Refresh()
 			cap->m_samples.push_back(value);
 		}
 	}
-
-	dt = GetTime() - start;
-	start = GetTime();
-	LogTrace("NCO: %.3f ms\n", dt * 1000);
 
 	total_error /= edges.size();
 	LogTrace("average phase error %.1f\n", total_error);

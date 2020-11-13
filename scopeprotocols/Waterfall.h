@@ -41,6 +41,10 @@ public:
 	WaterfallWaveform(size_t width, size_t height);
 	virtual ~WaterfallWaveform();
 
+	//not copyable or assignable
+	WaterfallWaveform(const WaterfallWaveform&) =delete;
+	WaterfallWaveform& operator=(const WaterfallWaveform&) =delete;
+
 	float* GetData()
 	{ return m_outdata; }
 
@@ -54,7 +58,11 @@ protected:
 class Waterfall : public Filter
 {
 public:
-	Waterfall(std::string color);
+	Waterfall(const std::string& color);
+
+	//not copyable or assignable
+	Waterfall(const Waterfall&) =delete;
+	Waterfall& operator=(const Waterfall&) =delete;
 
 	virtual void Refresh();
 
