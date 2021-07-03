@@ -49,7 +49,7 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-SCPIGPIBTransport::SCPIGPIBTransport(string args)
+SCPIGPIBTransport::SCPIGPIBTransport(const std::string &args)
 {
 	// TODO: add configuration options:
 	// - set the maximum request size of usbtmc read requests (currently 2032)
@@ -123,17 +123,18 @@ string SCPIGPIBTransport::GetConnectionString()
 	return std::to_string(m_deviceAddress);
 }
 
-bool SCPIGPIBTransport::SendCommand(string cmd)
+bool SCPIGPIBTransport::SendCommand(const std::string &cmd)
 {
+	std::string ncmd = cmd;
 	if (!IsConnected())
 		return false;
 
 	LogTrace("Sending %s\n", cmd.c_str());
 
 	// If the command doesn't end with a newline, append it.
-	if(cmd.compare(cmd.length() - 1, 1, "\n") != 0)
-		cmd.append("\n");
-	int result = ibwrt(m_handle, cmd.c_str(), cmd.length());
+	if(ncmd.compare(ncmd.length() - 1, 1, "\n") != 0)
+		ncmd.append("\n");
+	int result = ibwrt(m_handle, ncmd.c_str(), ncmd.length());
 
 	m_data_in_staging_buf = 0;
 	m_data_offset = 0;
@@ -142,7 +143,7 @@ bool SCPIGPIBTransport::SendCommand(string cmd)
 	return !(result & ERR);
 }
 
-string SCPIGPIBTransport::ReadReply()
+string SCPIGPIBTransport::ReadReply(bool endOnSemicolon)
 {
 	string ret;
 

@@ -30,6 +30,7 @@
 #include "scopehal.h"
 #include "HPOscilloscope.h"
 #include "EdgeTrigger.h"
+#include <random>
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
@@ -52,13 +53,15 @@ HPOscilloscope::HPOscilloscope(SCPITransport* transport)
 		),
 		model_number.end()
 	);
-	int nchans = (std::stoi(model_number) / 10) % 10;
+	int nchans = 1;//(std::stoi(model_number) / 10) % 10;
 	is545X2model = std::stoi(model_number) % 10 == 2;
 
 	m_transport->SendCommand(":ACQ:POINTS 512");
 	m_transport->SendCommand(":DISP:SCREEN OFF");
-	m_transport->SendCommand("TIM:REF LEFT");
-	//m_transport->SendCommand(":AUTOSCALE");
+	m_transport->SendCommand(":DISPLAY:CONNECT OFF");
+	//m_transport->SendCommand(":TIM:REF CENTER");
+	//m_transport->SendCommand(":TIM:RANGE 1");
+	//m_transport->SendCommand(":tim:delay 1.5E-6");
 
 	for(int i=0; i<nchans; i++)
 	{
@@ -87,19 +90,20 @@ HPOscilloscope::HPOscilloscope(SCPITransport* transport)
 		}
 
 		//Create the channel
-		m_channels.push_back(
-			new OscilloscopeChannel(
-			this,
-			chname,
-			OscilloscopeChannel::CHANNEL_TYPE_ANALOG,
-			color,
-			1,
-			i,
-			true));
+		auto chan = new OscilloscopeChannel(
+				this,
+				chname,
+				OscilloscopeChannel::CHANNEL_TYPE_ANALOG,
+				color,
+				1,
+				i,
+				true);
+		m_channels.push_back(chan);
+		chan->SetDefaultDisplayName();
 
 		//Configure transport format to raw 8-bit int
 		m_transport->SendCommand(":WAV:SOUR " + chname);
-		m_transport->SendCommand(":WAV:FORM BYTE");
+		m_transport->SendCommand(":WAV:FORM COMP");
 
 		//Request all points when we download
 		m_transport->SendCommand(":ACQ:TYPE NORM");
@@ -483,15 +487,25 @@ bool HPOscilloscope::AcquireData()
 		//Discard trailing newline
 		m_transport->ReadRawData(1, (unsigned char*)tmp);
 
+		const double lsb = m_channels[i]->GetVoltageRange() / pow(2, 8);
+		std::uniform_real_distribution<double> rand(-lsb*2, lsb*2);
+		std::default_random_engine re;
+		re.seed(clock());
 		//Format the capture
 		cap->Resize(waveformParameters.length);
+		bool do_rand = false;
+		double arand = 0;
 		for(size_t j=0; j<waveformParameters.length; j++)
 		{
+			if(do_rand)
+			{
+				arand = rand(re);
+			}
 			cap->m_offsets[j] = j;
 			cap->m_durations[j] = 1;
 			cap->m_samples[j] = waveformParameters.yincrement
 					* (temp_buf[j] - waveformParameters.yreference)
-					+ waveformParameters.yorigin;
+					+ waveformParameters.yorigin + arand;
 		}
 
 		//Done, update the data
@@ -566,7 +580,11 @@ std::vector<uint64_t> HPOscilloscope::GetSampleRatesNonInterleaved()
 
 	// TODO: Implement sample rate limit on 545X0 models
 
-	std::vector<uint64_t> ret = { 10, 25, 50, 100, 250, 500, 1*k, int(2.5*k), 5*k, 10*k, 25*k, 50*k,
+//	std::vector<uint64_t> ret = { 10, 25, 50, 100, 250, 500, 1*k, int(2.5*k), 5*k, 10*k, 25*k, 50*k,
+//								  100*k, 250*k, 500*k, 1*m, int(2.5*m), 5*m, 10*m, 25*m, 50*m, 100*m,
+//								  250*m, 500*m, 1*g, 2*g };
+
+	std::vector<uint64_t> ret = { int(2.5*k), 5*k, 10*k, 25*k, 50*k,
 								  100*k, 250*k, 500*k, 1*m, int(2.5*m), 5*m, 10*m, 25*m, 50*m, 100*m,
 								  250*m, 500*m, 1*g, 2*g };
 
@@ -622,14 +640,18 @@ void HPOscilloscope::SetSampleDepth(uint64_t depth)
 	// 512 stays 512, 1024 becomes 1, 2048 becomes 2, and so on. We correct that here.
 	if(depth != 512)
 		depth *= 1024;
+	depth = 512;
 	m_transport->SendCommand(std::string(":ACQ:POINTS ") + std::to_string(depth));
 }
 
 void HPOscilloscope::SetSampleRate(uint64_t rate)
 {
-	std::lock_guard<std::recursive_mutex> lock(m_mutex);
-	LogDebug("%s", ("Setting sample rate to " + std::to_string(rate) + "\n").c_str());
-	m_transport->SendCommand(std::string(":TIM:SAMP:CLOCK ") + std::to_string(rate));
+	if(rate >= GetSampleRatesNonInterleaved()[0])
+	{
+		std::lock_guard<std::recursive_mutex> lock(m_mutex);
+		LogDebug("%s", ("Setting sample rate to " + std::to_string(rate) + "\n").c_str());
+		m_transport->SendCommand(std::string(":TIM:SAMP:CLOCK ") + std::to_string(rate));
+	}
 }
 
 void HPOscilloscope::SetTriggerOffset(int64_t /*offset*/)
@@ -781,9 +803,10 @@ void HPOscilloscope::digitizeActiveChannels()
 {
 	std::lock_guard<std::recursive_mutex> lock(m_mutex);
 	std::string digitizeCommand = ":DIG ";
-	for(size_t i=0; i<m_analogChannelCount; i++)
+	for(size_t i = 0; i < m_analogChannelCount; i++)
 	{
-		digitizeCommand.append(m_channels[i]->GetHwname() + ",");
+		if(m_channels[i]->IsEnabled())
+			digitizeCommand.append(m_channels[i]->GetHwname() + ",");
 	}
 	digitizeCommand.pop_back();
 	m_transport->SendCommand(digitizeCommand);

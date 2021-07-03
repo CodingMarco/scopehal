@@ -123,7 +123,7 @@ KeysightOscilloscope::KeysightOscilloscope(SCPITransport* transport)
 		if (opt == "0")
 			continue;
 		if (opt.substr(opt.length()-3, 3) == "(d)")
-			opt.erase(opt.length()-3);
+		        opt.erase(opt.length()-3);
 
 		options.push_back(opt);
 	}
