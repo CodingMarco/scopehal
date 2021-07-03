@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -109,7 +109,7 @@ void I2CDecoder::Refresh()
 	auto cap = new I2CWaveform;
 	cap->m_timescale = sda->m_timescale;
 	cap->m_startTimestamp = sda->m_startTimestamp;
-	cap->m_startPicoseconds = sda->m_startPicoseconds;
+	cap->m_startFemtoseconds = sda->m_startFemtoseconds;
 
 	//Loop over the data and look for transactions
 	//For now, assume equal sample rate

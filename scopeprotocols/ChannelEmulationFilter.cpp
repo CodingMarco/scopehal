@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -64,9 +64,10 @@ void ChannelEmulationFilter::SetDefaultName()
 	snprintf(
 		hwname,
 		sizeof(hwname),
-		"ChannelEmulation(%s, %s)",
+		"ChannelEmulation(%s, %s, %s)",
 		GetInputDisplayName(0).c_str(),
-		base.c_str()
+		base.c_str(),
+		m_parameters[m_pathName].ToString().c_str()
 		);
 
 	m_hwname = hwname;

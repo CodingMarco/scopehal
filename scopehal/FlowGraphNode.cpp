@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -51,6 +51,24 @@ FlowGraphNode::FlowGraphNode()
 
 FlowGraphNode::~FlowGraphNode()
 {
+	//Release any inputs we currently have refs to
+	for(auto c : m_inputs)
+	{
+		if(c.m_channel != NULL)
+			c.m_channel->Release();
+	}
+}
+
+/**
+	@brief Disconnects all inputs from the node without releasing them.
+
+	This function is intended for use in Oscilloscope::~Oscilloscope() only.
+	Using it carelessly is likely to lead to memory leaks.
+ */
+void FlowGraphNode::DetachInputs()
+{
+	for(auto& c : m_inputs)
+		c.m_channel = NULL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -75,7 +93,7 @@ string FlowGraphNode::GetInputName(size_t i)
 		return m_signalNames[i];
 	else
 	{
-		LogError("Invalid channel index\n");
+		LogError("Invalid channel index %zu in FlowGraphNode::GetInputName()\n", i);
 		return "";
 	}
 }
@@ -113,17 +131,27 @@ void FlowGraphNode::SetInput(size_t i, StreamDescriptor stream, bool force)
 			}
 		}
 
+		/*
+			It's critical to ref the new input *before* dereffing the current one (#432).
+
+			Consider a 3-node filter chain A -> B -> C, A and B offscreen.
+			If we set C's input to A's output, B now has no loads and will get GC'd.
+			... but now A has no loads!
+
+			This causes A to get GC'd right before we hook up C's input to it, and Bad Things(tm) happen.
+		 */
+		stream.m_channel->AddRef();
+
 		//Deref whatever was there (if anything)
 		if(m_inputs[i].m_channel != NULL)
 			m_inputs[i].m_channel->Release();
 
 		//All good, we can save the new input
 		m_inputs[i] = stream;
-		stream.m_channel->AddRef();
 	}
 	else
 	{
-		LogError("Invalid channel index\n");
+		LogError("Invalid channel index %zu in FlowGraphNode::SetInput()\n", i);
 	}
 }
 
@@ -160,7 +188,7 @@ StreamDescriptor FlowGraphNode::GetInput(size_t i)
 		return m_inputs[i];
 	else
 	{
-		LogError("Invalid channel index\n");
+		LogError("Invalid channel index %zu in FlowGraphNode::GetInput()\n", i);
 		return StreamDescriptor(NULL, 0);
 	}
 }
@@ -177,4 +205,94 @@ string FlowGraphNode::GetInputDisplayName(size_t i)
 		return in.m_channel->GetDisplayName() + "." + in.m_channel->GetStreamName(in.m_stream);
 	else
 		return in.m_channel->GetDisplayName();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Serialization
+
+string FlowGraphNode::SerializeConfiguration(IDTable& table, size_t indent)
+{
+	string sindent = "";
+	for(size_t i=0; i<indent; i++)
+		sindent += ' ';
+
+	//Inputs
+	char tmp[1024];
+	string config = sindent + "inputs:\n";
+	for(size_t i=0; i<m_inputs.size(); i++)
+	{
+		auto desc = m_inputs[i];
+		if(desc.m_channel == NULL)
+			snprintf(tmp, sizeof(tmp), "    %-20s 0\n", (m_signalNames[i] + ":").c_str());
+		else
+		{
+			snprintf(tmp, sizeof(tmp), "    %-20s %d/%zu\n",
+				(m_signalNames[i] + ":").c_str(),
+				table.emplace(desc.m_channel),
+				desc.m_stream
+			);
+		}
+		config += sindent + tmp;
+	}
+
+	//Parameters
+	config += sindent + "parameters:\n";
+	for(auto it : m_parameters)
+	{
+		switch(it.second.GetType())
+		{
+			case FilterParameter::TYPE_FLOAT:
+			case FilterParameter::TYPE_INT:
+			case FilterParameter::TYPE_BOOL:
+				snprintf(
+					tmp,
+					sizeof(tmp),
+					"    %-20s %s\n", (it.first+":").c_str(), it.second.ToString().c_str());
+				break;
+
+			case FilterParameter::TYPE_FILENAME:
+			case FilterParameter::TYPE_FILENAMES:
+			default:
+				snprintf(
+					tmp,
+					sizeof(tmp),
+					"    %-20s \"%s\"\n", (it.first+":").c_str(), it.second.ToString().c_str());
+				break;
+		}
+
+		config += sindent + tmp;
+	}
+
+	return config;
+}
+
+void FlowGraphNode::LoadParameters(const YAML::Node& node, IDTable& /*table*/)
+{
+	auto parameters = node["parameters"];
+	for(auto it : parameters)
+		GetParameter(it.first.as<string>()).ParseString(it.second.as<string>());
+}
+
+void FlowGraphNode::LoadInputs(const YAML::Node& node, IDTable& table)
+{
+	int index;
+	int stream;
+
+	auto inputs = node["inputs"];
+	for(auto it : inputs)
+	{
+		//Inputs are formatted as %d/%d. Stream index may be omitted.
+		auto sin = it.second.as<string>();
+		if(2 != sscanf(sin.c_str(), "%d/%d", &index, &stream))
+		{
+			index = atoi(sin.c_str());
+			stream = 0;
+		}
+
+		SetInput(
+			it.first.as<string>(),
+			StreamDescriptor(static_cast<OscilloscopeChannel*>(table[index]), stream),
+			true
+			);
+	}
 }

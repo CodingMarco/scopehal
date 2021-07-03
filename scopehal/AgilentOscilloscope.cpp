@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg, Mike Walters                                                            *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -30,6 +30,8 @@
 #include "scopehal.h"
 #include "AgilentOscilloscope.h"
 #include "EdgeTrigger.h"
+#include "PulseWidthTrigger.h"
+#include "NthEdgeBurstTrigger.h"
 
 using namespace std;
 
@@ -169,7 +171,13 @@ void AgilentOscilloscope::FlushConfigCache()
 	m_channelOffsets.clear();
 	m_channelVoltageRanges.clear();
 	m_channelCouplings.clear();
+	m_channelAttenuations.clear();
+	m_channelBandwidthLimits.clear();
 	m_channelsEnabled.clear();
+	m_probeTypes.clear();
+
+	m_sampleRateValid = false;
+	m_sampleDepthValid = false;
 
 	delete m_trigger;
 	m_trigger = NULL;
@@ -234,6 +242,16 @@ void AgilentOscilloscope::DisableChannel(size_t i)
 	m_channelsEnabled[i] = false;
 }
 
+vector<OscilloscopeChannel::CouplingType> AgilentOscilloscope::GetAvailableCouplings(size_t /*i*/)
+{
+	vector<OscilloscopeChannel::CouplingType> ret;
+	ret.push_back(OscilloscopeChannel::COUPLE_DC_1M);
+	ret.push_back(OscilloscopeChannel::COUPLE_AC_1M);
+	ret.push_back(OscilloscopeChannel::COUPLE_DC_50);
+	ret.push_back(OscilloscopeChannel::COUPLE_GND);
+	return ret;
+}
+
 OscilloscopeChannel::CouplingType AgilentOscilloscope::GetChannelCoupling(size_t i)
 {
 	{
@@ -269,6 +287,11 @@ OscilloscopeChannel::CouplingType AgilentOscilloscope::GetChannelCoupling(size_t
 
 void AgilentOscilloscope::SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type)
 {
+	// If there's a smart probe on this channel, the coupling is fixed to 50ohm so bail out.
+	GetProbeType(i);
+	if (m_probeTypes[i] == SmartProbe)
+		return;
+
 	{
 		lock_guard<recursive_mutex> lock(m_mutex);
 		switch(type)
@@ -318,9 +341,20 @@ double AgilentOscilloscope::GetChannelAttenuation(size_t i)
 	return atten;
 }
 
-void AgilentOscilloscope::SetChannelAttenuation(size_t /*i*/, double /*atten*/)
+void AgilentOscilloscope::SetChannelAttenuation(size_t i, double atten)
 {
-	//FIXME
+	// If there's a SmartProbe or AutoProbe on this channel, the attenuation is fixed so bail out.
+	GetProbeType(i);
+	if (m_probeTypes[i] != None)
+		return;
+
+	{
+		lock_guard<recursive_mutex> lock(m_mutex);
+		PushFloat(m_channels[i]->GetHwname() + ":PROB", atten);
+	}
+
+	lock_guard<recursive_mutex> lock(m_cacheMutex);
+	m_channelAttenuations[i] = atten;
 }
 
 int AgilentOscilloscope::GetChannelBandwidthLimit(size_t i)
@@ -487,7 +521,7 @@ bool AgilentOscilloscope::AcquireData()
 				&format, &type, &length, &average_count, &xincrement, &xorigin, &xreference, &yincrement, &yorigin, &yreference);
 
 		//Figure out the sample rate
-		int64_t ps_per_sample = round(xincrement * 1e12f);
+		int64_t fs_per_sample = round(xincrement * FS_PER_SECOND);
 		//LogDebug("%ld ps/sample\n", ps_per_sample);
 
 		//LogDebug("length = %d\n", length);
@@ -495,11 +529,11 @@ bool AgilentOscilloscope::AcquireData()
 		//Set up the capture we're going to store our data into
 		//(no TDC data available on Agilent scopes?)
 		AnalogWaveform* cap = new AnalogWaveform;
-		cap->m_timescale = ps_per_sample;
+		cap->m_timescale = fs_per_sample;
 		cap->m_triggerPhase = 0;
 		cap->m_startTimestamp = time(NULL);
 		double t = GetTime();
-		cap->m_startPicoseconds = (t - floor(t)) * 1e12f;
+		cap->m_startFemtoseconds = (t - floor(t)) * FS_PER_SECOND;
 
 		//Ask for the data
 		m_transport->SendCommand(":WAV:DATA?");
@@ -588,15 +622,43 @@ void AgilentOscilloscope::Stop()
 	m_triggerOneShot = true;
 }
 
+void AgilentOscilloscope::ForceTrigger()
+{
+	LogError("AgilentOscilloscope::ForceTrigger not implemented\n");
+}
+
 bool AgilentOscilloscope::IsTriggerArmed()
 {
 	return m_triggerArmed;
 }
 
+std::map<uint64_t, double> sampleRateToDuration {
+	// Map sample rates to corresponding maximum on-screen time duration setting
+	{8000      , 500},
+	{20000     , 200},
+	{40000     , 100},
+	{80000     , 50},
+	{200000    , 20},
+	{400000    , 10},
+	{800000    , 5},
+	{2000000   , 2},
+	{4000000   , 1},
+	{8000000   , 500e-3},
+	{20000000  , 200e-3},
+	{40000000  , 100e-3},
+	{80000000  , 50e-3},
+	{200000000 , 20e-3},
+	{400000000 , 10e-3},
+	{500000000 , 5e-3},
+	{2000000000, 2e-3},
+};
+
 vector<uint64_t> AgilentOscilloscope::GetSampleRatesNonInterleaved()
 {
-	//FIXME
 	vector<uint64_t> ret;
+	for (auto x: sampleRateToDuration)
+		ret.push_back(x.first);
+
 	return ret;
 }
 
@@ -616,9 +678,24 @@ set<Oscilloscope::InterleaveConflict> AgilentOscilloscope::GetInterleaveConflict
 
 vector<uint64_t> AgilentOscilloscope::GetSampleDepthsNonInterleaved()
 {
-	//FIXME
-	vector<uint64_t> ret;
-	return ret;
+	return {
+		100,
+		250,
+		500,
+		1000,
+		2000,
+		5000,
+		10000,
+		20000,
+		50000,
+		100000,
+		200000,
+		500000,
+		1000000,
+		2000000,
+		4000000,
+		8000000,
+	};
 }
 
 vector<uint64_t> AgilentOscilloscope::GetSampleDepthsInterleaved()
@@ -630,24 +707,70 @@ vector<uint64_t> AgilentOscilloscope::GetSampleDepthsInterleaved()
 
 uint64_t AgilentOscilloscope::GetSampleRate()
 {
-	//FIXME
-	return 1;
+	if (m_sampleRateValid)
+		return m_sampleRate;
+
+	lock_guard<recursive_mutex> lock(m_mutex);
+	m_transport->SendCommand("ACQUIRE:SRATE?");
+	uint64_t rate = stof(m_transport->ReadReply());
+	m_sampleRate = rate;
+	m_sampleRateValid = true;
+	return rate;
 }
 
 uint64_t AgilentOscilloscope::GetSampleDepth()
 {
-	//FIXME
-	return 1;
+	if (m_sampleDepthValid)
+		return m_sampleDepth;
+
+	lock_guard<recursive_mutex> lock(m_mutex);
+	m_transport->SendCommand("ACQUIRE:POINTS?");
+	uint64_t depth = stof(m_transport->ReadReply());
+	m_sampleDepth = depth;
+	m_sampleDepthValid = true;
+	return depth;
 }
 
-void AgilentOscilloscope::SetSampleDepth(uint64_t /*depth*/)
+void AgilentOscilloscope::SetSampleRateAndDepth(uint64_t rate, uint64_t depth)
 {
-	//FIXME
+	// Look up the maximum capture duration for the requested sample rate
+	auto d = sampleRateToDuration.find(rate);
+	if (d == sampleRateToDuration.end())
+		return;
+	auto max_duration = d->second;
+
+	// Calculate the duration of the requested capture in seconds
+	auto duration = (double)depth / (double)rate;
+
+	// Clamp the duration to make sure we achieve at least the requested sample rate
+	duration = min(duration, max_duration);
+
+	lock_guard<recursive_mutex> lock(m_mutex);
+	PushFloat("TIMEBASE:RANGE", duration);
+	for (auto chan: m_channels) {
+		if (chan->GetType() == OscilloscopeChannel::CHANNEL_TYPE_ANALOG) {
+			m_transport->SendCommand(":WAV:SOUR " + chan->GetHwname());
+
+			// This will downsample the capture in case we ended up with a sample rate much higher than requested
+			m_transport->SendCommand(":WAV:POINTS " + to_string(depth));
+		}
+	}
 }
 
-void AgilentOscilloscope::SetSampleRate(uint64_t /*rate*/)
+void AgilentOscilloscope::SetSampleDepth(uint64_t depth)
 {
-	//FIXME
+	auto rate = GetSampleRate();
+	SetSampleRateAndDepth(rate, depth);
+	m_sampleDepth = depth;
+	m_sampleDepthValid = true;
+}
+
+void AgilentOscilloscope::SetSampleRate(uint64_t rate)
+{
+	auto depth = GetSampleDepth();
+	SetSampleRateAndDepth(rate, depth);
+	m_sampleRate = rate;
+	m_sampleRateValid = true;
 }
 
 void AgilentOscilloscope::SetTriggerOffset(int64_t /*offset*/)
@@ -680,6 +803,10 @@ void AgilentOscilloscope::PullTrigger()
 	string reply = m_transport->ReadReply();
 	if (reply == "EDGE")
 		PullEdgeTrigger();
+	else if (reply == "GLIT")
+		PullPulseWidthTrigger();
+	else if (reply == "EBUR")
+		PullNthEdgeBurstTrigger();
 
 	//Unrecognized trigger type
 	else
@@ -705,7 +832,7 @@ void AgilentOscilloscope::PullEdgeTrigger()
 	//Create a new trigger if necessary
 	if(m_trigger == NULL)
 		m_trigger = new EdgeTrigger(this);
-	EdgeTrigger* et = dynamic_cast<EdgeTrigger*>(m_trigger);
+	auto et = dynamic_cast<EdgeTrigger*>(m_trigger);
 
 	lock_guard<recursive_mutex> lock(m_mutex);
 
@@ -724,21 +851,201 @@ void AgilentOscilloscope::PullEdgeTrigger()
 
 	//Edge slope
 	m_transport->SendCommand("TRIG:SLOPE?");
-	reply = m_transport->ReadReply();
+	GetTriggerSlope(et, m_transport->ReadReply());
+}
+
+void AgilentOscilloscope::PullNthEdgeBurstTrigger()
+{
+	//Clear out any triggers of the wrong type
+	if( (m_trigger != NULL) && (dynamic_cast<NthEdgeBurstTrigger*>(m_trigger) != NULL) )
+	{
+		delete m_trigger;
+		m_trigger = NULL;
+	}
+
+	//Create a new trigger if necessary
+	if(m_trigger == NULL)
+		m_trigger = new NthEdgeBurstTrigger(this);
+	auto bt = dynamic_cast<NthEdgeBurstTrigger*>(m_trigger);
+
+	lock_guard<recursive_mutex> lock(m_mutex);
+
+	//Source
+	m_transport->SendCommand("TRIG:EDGE:SOUR?");
+	string reply = m_transport->ReadReply();
+	auto chan = GetChannelByHwName(reply);
+	bt->SetInput(0, StreamDescriptor(chan, 0), true);
+	if(!chan)
+		LogWarning("Unknown trigger source %s\n", reply.c_str());
+
+	//Level
+	m_transport->SendCommand("TRIG:EDGE:LEV?");
+	bt->SetLevel(stof(m_transport->ReadReply()));
+
+	//Slope
+	m_transport->SendCommand("TRIG:EBUR:SLOP?");
+	GetTriggerSlope(bt, m_transport->ReadReply());
+
+	//Idle time
+	m_transport->SendCommand("TRIG:EBUR:IDLE?");
+	bt->SetIdleTime(stof(m_transport->ReadReply()) * FS_PER_SECOND);
+
+	//Edge number
+	m_transport->SendCommand("TRIG:EBUR:COUN?");
+	bt->SetEdgeNumber(stoi(m_transport->ReadReply()));
+}
+
+void AgilentOscilloscope::PullPulseWidthTrigger()
+{
+	//Clear out any triggers of the wrong type
+	if( (m_trigger != NULL) && (dynamic_cast<PulseWidthTrigger*>(m_trigger) != NULL) )
+	{
+		delete m_trigger;
+		m_trigger = NULL;
+	}
+
+	//Create a new trigger if necessary
+	if(m_trigger == NULL)
+		m_trigger = new PulseWidthTrigger(this);
+	auto pt = dynamic_cast<PulseWidthTrigger*>(m_trigger);
+
+	lock_guard<recursive_mutex> lock(m_mutex);
+
+	//Source
+	m_transport->SendCommand("TRIG:GLIT:SOUR?");
+	string reply = m_transport->ReadReply();
+	auto chan = GetChannelByHwName(reply);
+	pt->SetInput(0, StreamDescriptor(chan, 0), true);
+	if(!chan)
+		LogWarning("Unknown trigger source %s\n", reply.c_str());
+
+	//Level
+	m_transport->SendCommand("TRIG:GLIT:LEV?");
+	pt->SetLevel(stof(m_transport->ReadReply()));
+
+	//Condition
+	m_transport->SendCommand("TRIG:GLIT:QUAL?");
+	pt->SetCondition(GetCondition(m_transport->ReadReply()));
+
+	//Slope
+	m_transport->SendCommand("TRIG:GLIT:POL?");
+	GetTriggerSlope(pt, m_transport->ReadReply());
+
+	// Bounds
+	//
+	// In the BETWEEN condition the bounds are stored in a different variable
+	// on the scope so check & set the correct one.
+	if(pt->GetCondition() == Trigger::CONDITION_BETWEEN)
+	{
+		m_transport->SendCommand("TRIG:GLIT:RANG?");
+		reply = m_transport->ReadReply();
+		stringstream ss(reply);
+		string upper_bound, lower_bound;
+
+		if (!getline(ss, upper_bound, ',') || !getline(ss, lower_bound, ','))
+			LogWarning("Malformed TRIG:GLIT:RANG response: %s\n", reply.c_str());
+		else
+		{
+			pt->SetLowerBound(stof(lower_bound) * FS_PER_SECOND);
+			pt->SetUpperBound(stof(upper_bound) * FS_PER_SECOND);
+		}
+
+	}
+	else
+	{
+		//Lower bound
+		m_transport->SendCommand("TRIG:GLIT:GRE?");
+		pt->SetLowerBound(stof(m_transport->ReadReply()) * FS_PER_SECOND);
+
+		//Upper bound
+		m_transport->SendCommand("TRIG:GLIT:LESS?");
+		pt->SetUpperBound(stof(m_transport->ReadReply()) * FS_PER_SECOND);
+	}
+}
+
+/**
+	@brief Processes the slope for an edge or edge-derived trigger
+ */
+void AgilentOscilloscope::GetTriggerSlope(EdgeTrigger* trig, string reply)
+{
 	if (reply == "POS")
-		et->SetType(EdgeTrigger::EDGE_RISING);
+		trig->SetType(EdgeTrigger::EDGE_RISING);
 	else if (reply == "NEG")
-		et->SetType(EdgeTrigger::EDGE_FALLING);
+		trig->SetType(EdgeTrigger::EDGE_FALLING);
 	else if (reply == "EITH")
-		et->SetType(EdgeTrigger::EDGE_ANY);
+		trig->SetType(EdgeTrigger::EDGE_ANY);
 	else if (reply == "ALT")
-		et->SetType(EdgeTrigger::EDGE_ALTERNATING);
+		trig->SetType(EdgeTrigger::EDGE_ALTERNATING);
+	else
+		LogWarning("Unknown trigger slope %s\n", reply.c_str());
+}
+
+/**
+	@brief Processes the slope for an Nth edge burst trigger
+ */
+void AgilentOscilloscope::GetTriggerSlope(NthEdgeBurstTrigger* trig, string reply)
+{
+	if (reply == "POS")
+		trig->SetSlope(NthEdgeBurstTrigger::EDGE_RISING);
+	else if (reply == "NEG")
+		trig->SetSlope(NthEdgeBurstTrigger::EDGE_FALLING);
+	else
+		LogWarning("Unknown trigger slope %s\n", reply.c_str());
+}
+
+/**
+	@brief Parses a trigger condition
+ */
+Trigger::Condition AgilentOscilloscope::GetCondition(string reply)
+{
+	reply = Trim(reply);
+
+	if(reply == "LESS")
+		return Trigger::CONDITION_LESS;
+	else if(reply == "GRE")
+		return Trigger::CONDITION_GREATER;
+	else if(reply == "RANG")
+		return Trigger::CONDITION_BETWEEN;
+
+	//unknown
+	return Trigger::CONDITION_LESS;
+}
+
+void AgilentOscilloscope::GetProbeType(size_t i)
+{
+	{
+		lock_guard<recursive_mutex> lock(m_cacheMutex);
+		if(m_probeTypes.find(i) != m_probeTypes.end())
+			return;
+	}
+
+	string reply;
+	{
+		lock_guard<recursive_mutex> lock(m_mutex);
+		m_transport->SendCommand(m_channels[i]->GetHwname() + ":PROBE:ID?");
+		reply = m_transport->ReadReply();
+	}
+
+	lock_guard<recursive_mutex> lock(m_cacheMutex);
+	if (reply == "AutoProbe")
+		m_probeTypes[i] = AutoProbe;
+	else if (reply == "NONE" || reply == "Unknown")
+		m_probeTypes[i] = None;
+	else
+		m_probeTypes[i] = SmartProbe;
 }
 
 void AgilentOscilloscope::PushTrigger()
 {
+	auto bt = dynamic_cast<NthEdgeBurstTrigger*>(m_trigger);
+	auto pt = dynamic_cast<PulseWidthTrigger*>(m_trigger);
 	auto et = dynamic_cast<EdgeTrigger*>(m_trigger);
-	if(et)
+	if(bt)
+		PushNthEdgeBurstTrigger(bt);
+	else if(pt)
+		PushPulseWidthTrigger(pt);
+	// Must go last
+	else if(et)
 		PushEdgeTrigger(et);
 
 	else
@@ -752,39 +1059,132 @@ void AgilentOscilloscope::PushEdgeTrigger(EdgeTrigger* trig)
 {
 	lock_guard<recursive_mutex> lock(m_mutex);
 
+	//Mode
+	m_transport->SendCommand("TRIG:MODE EDGE");
+
 	//Source
 	m_transport->SendCommand(string("TRIG:SOURCE ") + trig->GetInput(0).m_channel->GetHwname());
 
 	//Level
-	char tmp[32];
-	snprintf(tmp, sizeof(tmp), "TRIG:LEV %.3f", trig->GetLevel());
-	m_transport->SendCommand(tmp);
+	PushFloat("TRIG:LEV", trig->GetLevel());
 
 	//Slope
-	switch((int)trig->GetType())
-	{
-		case EdgeTrigger::EDGE_RISING:
-			m_transport->SendCommand("TRIG:SLOPE POS");
-			break;
-		case EdgeTrigger::EDGE_FALLING:
-			m_transport->SendCommand("TRIG:SLOPE NEG");
-			break;
-		case EdgeTrigger::EDGE_ANY:
-			m_transport->SendCommand("TRIG:SLOPE EITH");
-			break;
-		case EdgeTrigger::EDGE_ALTERNATING:
-			m_transport->SendCommand("TRIG:SLOPE ALT");
-			break;
+	PushSlope("TRIG:SLOPE", trig->GetType());
+}
 
+/**
+	@brief Pushes settings for a Nth edge burst trigger to the instrument
+ */
+void AgilentOscilloscope::PushNthEdgeBurstTrigger(NthEdgeBurstTrigger* trig)
+{
+	lock_guard<recursive_mutex> lock(m_mutex);
+
+	m_transport->SendCommand("TRIG:MODE EBUR");
+	m_transport->SendCommand("TRIG:EDGE:SOURCE " +
+		trig->GetInput(0).m_channel->GetHwname());
+	PushFloat("TRIG:EDGE:LEV", trig->GetLevel());
+	PushSlope("TRIG:EBUR:SLOP", trig->GetSlope());
+	PushFloat("TRIG:EBUR:IDLE", trig->GetIdleTime() * SECONDS_PER_FS);
+	m_transport->SendCommand("TRIG:EBUR:COUNT " + to_string(trig->GetEdgeNumber()));
+}
+
+/**
+	@brief Pushes settings for a pulse width trigger to the instrument
+ */
+void AgilentOscilloscope::PushPulseWidthTrigger(PulseWidthTrigger* trig)
+{
+	lock_guard<recursive_mutex> lock(m_mutex);
+
+	m_transport->SendCommand("TRIG:MODE GLIT");
+	m_transport->SendCommand("TRIG:GLIT:SOURCE " +
+		trig->GetInput(0).m_channel->GetHwname());
+	PushSlope("TRIG:GLIT:POL", trig->GetType());
+	PushCondition("TRIG:GLIT:QUAL", trig->GetCondition());
+	PushFloat("TRIG:GLIT:LEV", trig->GetLevel());
+	if(trig->GetCondition() == Trigger::CONDITION_BETWEEN)
+	{
+		m_transport->SendCommand("TRIG:GLIT:RANG " +
+			to_string_sci(trig->GetUpperBound() * SECONDS_PER_FS) +
+			"," +
+			to_string_sci(trig->GetLowerBound() * SECONDS_PER_FS));
+	}
+	else
+	{
+		PushFloat("TRIG:GLIT:LESS", trig->GetUpperBound() * SECONDS_PER_FS);
+		PushFloat("TRIG:GLIT:GRE",  trig->GetLowerBound() * SECONDS_PER_FS);
+	}
+}
+
+void AgilentOscilloscope::PushCondition(string path, Trigger::Condition cond)
+{
+	string cond_str;
+	switch(cond)
+	{
+		case Trigger::CONDITION_LESS:
+			cond_str = "LESS";
+			break;
+		case Trigger::CONDITION_GREATER:
+			cond_str = "GRE";
+			break;
+		case Trigger::CONDITION_BETWEEN:
+			cond_str = "RANG";
+			break;
 		default:
 			return;
 	}
+	m_transport->SendCommand(path + " " + cond_str);
+}
+
+void AgilentOscilloscope::PushFloat(string path, float f)
+{
+	m_transport->SendCommand(path + " " + to_string_sci(f));
+}
+
+void AgilentOscilloscope::PushSlope(string path, EdgeTrigger::EdgeType slope)
+{
+	string slope_str;
+	switch(slope)
+	{
+		case EdgeTrigger::EDGE_RISING:
+			slope_str = "POS";
+			break;
+		case EdgeTrigger::EDGE_FALLING:
+			slope_str = "NEG";
+			break;
+		case EdgeTrigger::EDGE_ANY:
+			slope_str = "EITH";
+			break;
+		case EdgeTrigger::EDGE_ALTERNATING:
+			slope_str = "ALT";
+			break;
+		default:
+			return;
+	}
+	m_transport->SendCommand(path + " " + slope_str);
+}
+
+void AgilentOscilloscope::PushSlope(string path, NthEdgeBurstTrigger::EdgeType slope)
+{
+	string slope_str;
+	switch(slope)
+	{
+		case EdgeTrigger::EDGE_RISING:
+			slope_str = "POS";
+			break;
+		case EdgeTrigger::EDGE_FALLING:
+			slope_str = "NEG";
+			break;
+		default:
+			return;
+	}
+	m_transport->SendCommand(path + " " + slope_str);
 }
 
 vector<string> AgilentOscilloscope::GetTriggerTypes()
 {
 	vector<string> ret;
 	ret.push_back(EdgeTrigger::GetTriggerName());
+	ret.push_back(PulseWidthTrigger::GetTriggerName());
+	ret.push_back(NthEdgeBurstTrigger::GetTriggerName());
 	return ret;
 }
-

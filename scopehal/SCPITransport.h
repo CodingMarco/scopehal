@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -48,9 +48,23 @@ public:
 	virtual std::string GetConnectionString() =0;
 	virtual std::string GetName() =0;
 
+	//Queued command API
+	void SendCommandQueued(const std::string& cmd);
+	std::string SendCommandQueuedWithReply(std::string cmd, bool endOnSemicolon = true);
+	void SendCommandImmediate(std::string cmd);
+	std::string SendCommandImmediateWithReply(std::string cmd, bool endOnSemicolon = true);
+	void* SendCommandImmediateWithRawBlockReply(std::string cmd, size_t& len);
+	bool FlushCommandQueue();
+
+	//Manual mutex locking for ReadRawData() etc
+	std::recursive_mutex& GetMutex()
+	{ return m_netMutex; }
+
+	//Immediate command API
+	virtual void FlushRXBuffer(void);
 	virtual bool SendCommand(const std::string& cmd) =0;
 	virtual std::string ReadReply(bool endOnSemicolon = true) =0;
-	virtual void ReadRawData(size_t len, unsigned char* buf) =0;
+	virtual size_t ReadRawData(size_t len, unsigned char* buf) =0;
 	virtual void SendRawData(size_t len, const unsigned char* buf) =0;
 
 	virtual bool IsCommandBatchingSupported() =0;
@@ -64,9 +78,15 @@ public:
 	static SCPITransport* CreateTransport(const std::string& transport, const std::string& args);
 
 protected:
+
 	//Class enumeration
 	typedef std::map< std::string, CreateProcType > CreateMapType;
 	static CreateMapType m_createprocs;
+
+	//Queued commands waiting to be sent
+	std::mutex m_queueMutex;
+	std::recursive_mutex m_netMutex;
+	std::list<std::string> m_txQueue;
 };
 
 #define TRANSPORT_INITPROC(T) \

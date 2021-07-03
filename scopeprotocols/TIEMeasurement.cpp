@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -36,14 +36,22 @@ using namespace std;
 
 TIEMeasurement::TIEMeasurement(const string& color)
 	: Filter(OscilloscopeChannel::CHANNEL_TYPE_ANALOG, color, CAT_CLOCK)
+	, m_threshname("Threshold")
+	, m_skipname("Skip Start")
 {
-	m_yAxisUnit = Unit(Unit::UNIT_PS);
+	m_yAxisUnit = Unit(Unit::UNIT_FS);
 
 	//Set up channels
 	CreateInput("Clock");
 	CreateInput("Golden");
 
-	m_maxTie = 1;
+	ClearSweeps();
+
+	m_parameters[m_threshname] = FilterParameter(FilterParameter::TYPE_FLOAT, Unit(Unit::UNIT_VOLTS));
+	m_parameters[m_threshname].SetFloatVal(0);
+
+	m_parameters[m_skipname] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_FS));
+	m_parameters[m_skipname].SetIntVal(0);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -55,6 +63,8 @@ bool TIEMeasurement::ValidateChannel(size_t i, StreamDescriptor stream)
 		return false;
 
 	if( (i == 0) && (stream.m_channel->GetType() == OscilloscopeChannel::CHANNEL_TYPE_ANALOG) )
+		return true;
+	if( (i == 0) && (stream.m_channel->GetType() == OscilloscopeChannel::CHANNEL_TYPE_DIGITAL) )//allow digital clocks
 		return true;
 	if( (i == 1) && (stream.m_channel->GetType() == OscilloscopeChannel::CHANNEL_TYPE_DIGITAL) )
 		return true;
@@ -94,11 +104,24 @@ bool TIEMeasurement::NeedsConfig()
 
 double TIEMeasurement::GetVoltageRange()
 {
-	return m_maxTie * 2;
+	return m_range;
+}
+
+double TIEMeasurement::GetOffset()
+{
+	return m_offset;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Actual decoder logic
+
+void TIEMeasurement::ClearSweeps()
+{
+	m_range = 1;
+	m_offset = 0;
+	m_min = FLT_MAX;
+	m_max = -FLT_MAX;
+}
 
 void TIEMeasurement::Refresh()
 {
@@ -109,21 +132,31 @@ void TIEMeasurement::Refresh()
 	}
 
 	//Get the input data
-	auto clk = GetAnalogInputWaveform(0);
+	auto clk_analog = GetAnalogInputWaveform(0);
+	auto clk_digital = GetDigitalInputWaveform(0);
+	WaveformBase* clk = GetInputWaveform(0);
 	auto golden = GetDigitalInputWaveform(1);
-	size_t len = min(clk->m_samples.size(), golden->m_samples.size());
+	size_t len = min(clk->m_offsets.size(), golden->m_offsets.size());
 
 	//Create the output
 	auto cap = new AnalogWaveform;
 
 	//Timestamps of the edges
 	vector<int64_t> edges;
-	FindZeroCrossings(clk, 0, edges);
+	if(clk_analog)
+		FindZeroCrossings(clk_analog, m_parameters[m_threshname].GetFloatVal(), edges);
+	else
+		FindZeroCrossings(clk_digital, edges);
 
-	m_maxTie = 1;
+	//Ignore edges before things have stabilized
+	int64_t skip_time = m_parameters[m_skipname].GetIntVal();
+
+	int64_t vmin = FS_PER_SECOND;
+	int64_t vmax = -FS_PER_SECOND;
 
 	//For each input clock edge, find the closest recovered clock edge
 	size_t iedge = 0;
+	size_t tlast = 0;
 	for(auto atime : edges)
 	{
 		if(iedge >= len)
@@ -172,13 +205,28 @@ void TIEMeasurement::Refresh()
 		//edge for TIE measurements.
 		int64_t golden_period = next_edge - prev_edge;
 		int64_t golden_center = prev_edge + golden_period/2;
-		golden_center += 1.5*clk->m_timescale;			//TODO: why is this needed?
 		int64_t tie = atime - golden_center;
 
-		m_maxTie = max(m_maxTie, fabs(tie));
-		cap->m_offsets.push_back(atime);
-		cap->m_durations.push_back(golden_period);
-		cap->m_samples.push_back(tie);
+		//Ignore edges before things have stabilized
+		if(prev_edge < skip_time)
+		{}
+
+		else
+		{
+			//Update the last sample
+			size_t end = cap->m_durations.size();
+			if(end)
+				cap->m_durations[end-1] = atime - tlast;
+
+			vmax = max(vmax, tie);
+			vmin = min(vmin, tie);
+
+			cap->m_offsets.push_back(golden_center);
+			cap->m_durations.push_back(0);
+			cap->m_samples.push_back(tie);
+		}
+
+		tlast = golden_center;
 	}
 
 	SetData(cap, 0);
@@ -186,5 +234,12 @@ void TIEMeasurement::Refresh()
 	//Copy start time etc from the input
 	cap->m_timescale = 1;
 	cap->m_startTimestamp = clk->m_startTimestamp;
-	cap->m_startPicoseconds = 0;
+	cap->m_startFemtoseconds = clk->m_startFemtoseconds;
+	cap->m_triggerPhase = 0;
+
+	//Calculate bounds
+	m_max = max(m_max, (float)vmax);
+	m_min = min(m_min, (float)vmin);
+	m_range = (m_max - m_min) * 1.05;
+	m_offset = -( (m_max - m_min)/2 + m_min );
 }

@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -115,7 +115,7 @@ void IBM8b10bDecoder::Refresh()
 	auto cap = new IBM8b10bWaveform;
 	cap->m_timescale = 1;
 	cap->m_startTimestamp = din->m_startTimestamp;
-	cap->m_startPicoseconds = din->m_startPicoseconds;
+	cap->m_startFemtoseconds = din->m_startFemtoseconds;
 
 	//Record the value of the data stream at each clock edge
 	//TODO: allow single rate clocks too?
@@ -132,6 +132,7 @@ void IBM8b10bDecoder::Refresh()
 		size_t dlen = data.m_samples.size() - 20;
 		for(size_t i=0; i<dlen; i += 10)
 		{
+			/*
 			//Check if we have a comma (five identical bits) anywhere in the data stream
 			//Commas are always at positions 2...6 within the symbol (left-right bit ordering)
 			bool comma = true;
@@ -143,6 +144,37 @@ void IBM8b10bDecoder::Refresh()
 					break;
 				}
 			}
+			*/
+
+			//Look for K28.5 symbols only.
+			bool comma = false;
+			if(	!data.m_samples[i+offset+0] &&
+				!data.m_samples[i+offset+1] &&
+				data.m_samples[i+offset+2] &&
+				data.m_samples[i+offset+3] &&
+				data.m_samples[i+offset+4] &&
+				data.m_samples[i+offset+5] &&
+				data.m_samples[i+offset+6] &&
+				!data.m_samples[i+offset+7] &&
+				data.m_samples[i+offset+8] &&
+				!data.m_samples[i+offset+9])
+			{
+				comma = true;
+			}
+			if(	data.m_samples[i+offset+0] &&
+				data.m_samples[i+offset+1] &&
+				!data.m_samples[i+offset+2] &&
+				!data.m_samples[i+offset+3] &&
+				!data.m_samples[i+offset+4] &&
+				!data.m_samples[i+offset+5] &&
+				!data.m_samples[i+offset+6] &&
+				data.m_samples[i+offset+7] &&
+				!data.m_samples[i+offset+8] &&
+				data.m_samples[i+offset+9])
+			{
+				comma = true;
+			}
+
 			if(comma)
 				num_commas ++;
 		}
@@ -151,7 +183,7 @@ void IBM8b10bDecoder::Refresh()
 			max_commas = num_commas;
 			max_offset = offset;
 		}
-		//LogDebug("Found %zu commas at offset %zu\n", num_commas, offset);
+		//LogTrace("Found %zu commas at offset %zu\n", num_commas, offset);
 	}
 
 	//Decode the actual data
@@ -278,7 +310,7 @@ void IBM8b10bDecoder::Refresh()
 		int err3 = false;
 		if(ctl5)
 		{
-			if(disp5)
+			if(disp5 >= 0)
 				code3 = code3_pos_ctl_table[code4];
 			else
 				code3 = code3_neg_ctl_table[code4];
@@ -331,7 +363,7 @@ void IBM8b10bDecoder::Refresh()
 		cap->m_offsets.push_back(data.m_offsets[i] - data.m_durations[i]/2);
 
 		cap->m_durations.push_back(data.m_offsets[i+10] - data.m_offsets[i]);
-		cap->m_samples.push_back(IBM8b10bSymbol(ctl5, err5 || err3 || disperr, (code3 << 5) | code5));
+		cap->m_samples.push_back(IBM8b10bSymbol(ctl5, err5 || err3 || disperr, (code3 << 5) | code5, last_disp));
 
 		if(err5 || err3 || disperr)
 		{
@@ -388,7 +420,7 @@ string IBM8b10bDecoder::GetText(int i)
 
 		char tmp[32];
 		if(s.m_error)
-			snprintf(tmp, sizeof(tmp), "ERROR");
+			return "ERROR";
 		else
 		{
 			//Dotted format
@@ -398,6 +430,11 @@ string IBM8b10bDecoder::GetText(int i)
 					snprintf(tmp, sizeof(tmp), "K%u.%u", left, right);
 				else
 					snprintf(tmp, sizeof(tmp), "D%u.%u", left, right);
+
+				if(s.m_disparity < 0)
+					return string(tmp) + "-";
+				else
+					return string(tmp) + "+";
 			}
 
 			//Hex format
@@ -407,9 +444,9 @@ string IBM8b10bDecoder::GetText(int i)
 					snprintf(tmp, sizeof(tmp), "K.%02x", s.m_data);
 				else
 					snprintf(tmp, sizeof(tmp), "%02x", s.m_data);
+				return string(tmp);
 			}
 		}
-		return string(tmp);
 	}
 	return "";
 }

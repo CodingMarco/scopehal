@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -31,14 +31,14 @@
 #include "DropoutTrigger.h"
 #include "LeCroyOscilloscope.h"
 #include "TektronixOscilloscope.h"
+#include "SiglentSCPIOscilloscope.h"
 
 using namespace std;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-DropoutTrigger::DropoutTrigger(Oscilloscope* scope)
-	: Trigger(scope)
+DropoutTrigger::DropoutTrigger(Oscilloscope* scope) : Trigger(scope)
 {
 	CreateInput("din");
 
@@ -50,10 +50,10 @@ DropoutTrigger::DropoutTrigger(Oscilloscope* scope)
 		m_parameters[m_typename].AddEnumValue("Any", EDGE_ANY);
 
 	m_timename = "Dropout Time";
-	m_parameters[m_timename] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_PS));
+	m_parameters[m_timename] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_FS));
 
 	m_resetname = "Reset Mode";
-	if(dynamic_cast<LeCroyOscilloscope*>(scope))
+	if((dynamic_cast<LeCroyOscilloscope*>(scope)) || (dynamic_cast<SiglentSCPIOscilloscope*>(scope)))
 	{
 		m_parameters[m_resetname] = FilterParameter(FilterParameter::TYPE_ENUM, Unit(Unit::UNIT_COUNTS));
 		m_parameters[m_resetname].AddEnumValue("Opposite Edge", RESET_OPPOSITE);
@@ -63,7 +63,6 @@ DropoutTrigger::DropoutTrigger(Oscilloscope* scope)
 
 DropoutTrigger::~DropoutTrigger()
 {
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

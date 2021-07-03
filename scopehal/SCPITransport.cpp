@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -68,4 +68,103 @@ SCPITransport* SCPITransport::CreateTransport(const string& transport, const str
 
 	LogError("Invalid transport name \"%s\"\n", transport.c_str());
 	return NULL;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Command batching
+
+/**
+	@brief Pushes a command into the transmit FIFO then returns immediately.
+
+	This command will actually be sent the next time FlushCommandQueue() is called.
+ */
+void SCPITransport::SendCommandQueued(const string& cmd)
+{
+	lock_guard<mutex> lock(m_queueMutex);
+	m_txQueue.push_back(cmd);
+}
+
+/**
+	@brief Pushes all pending commands from SendCommandQueued() calls and blocks until they are all sent.
+ */
+bool SCPITransport::FlushCommandQueue()
+{
+	//Grab the queue, then immediately release the mutex so we can do more queued sends
+	list<string> tmp;
+	{
+		lock_guard<mutex> lock(m_queueMutex);
+		tmp = move(m_txQueue);
+		m_txQueue.clear();
+	}
+
+	lock_guard<recursive_mutex> lock(m_netMutex);
+	for(auto str : tmp)
+		SendCommand(str);
+	return true;
+}
+
+/**
+	@brief Sends a command (flushing any pending/queued commands first), then returns the response.
+
+	This is an atomic operation requiring no mutexing at the caller side.
+ */
+string SCPITransport::SendCommandQueuedWithReply(string cmd, bool endOnSemicolon)
+{
+	FlushCommandQueue();
+	return SendCommandImmediateWithReply(cmd, endOnSemicolon);
+}
+
+/**
+	@brief Sends a command (jumping ahead of the queue), then returns the response.
+
+	This is an atomic operation requiring no mutexing at the caller side.
+ */
+string SCPITransport::SendCommandImmediateWithReply(string cmd, bool endOnSemicolon)
+{
+	lock_guard<recursive_mutex> lock(m_netMutex);
+	SendCommand(cmd);
+	return ReadReply(endOnSemicolon);
+}
+
+/**
+	@brief Sends a command (jumping ahead of the queue) which does not require a response.
+ */
+void SCPITransport::SendCommandImmediate(string cmd)
+{
+	lock_guard<recursive_mutex> lock(m_netMutex);
+	SendCommand(cmd);
+}
+
+/**
+	@brief Sends a command (jumping ahead of the queue) which reads a binary block response
+ */
+void* SCPITransport::SendCommandImmediateWithRawBlockReply(string cmd, size_t& len)
+{
+	lock_guard<recursive_mutex> lock(m_netMutex);
+	SendCommand(cmd);
+
+	//Read the length
+	char tmplen[3] = {0};
+	if(2 != ReadRawData(2, (unsigned char*)tmplen))			//expect #n
+		return NULL;
+	if(tmplen[0] == 0)	//Not sure how this happens, but sometimes occurs on Tek MSO6?
+		return NULL;
+	size_t ndigits = stoull(tmplen+1);
+
+	//Read the digits
+	char digits[10] = {0};
+	if(ndigits != ReadRawData(ndigits, (unsigned char*)digits))
+		return NULL;
+	len = stoull(digits);
+
+	//Read the actual data
+	unsigned char* buf = new unsigned char[len];
+	len = ReadRawData(len, buf);
+	return buf;
+}
+
+void SCPITransport::FlushRXBuffer(void)
+
+{
+	LogError("SCPITransport::FlushRXBuffer is unimplemented");
 }

@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -123,17 +123,21 @@ protected:
 	void RefreshIterationSync(
 		size_t nin,
 		DecodeState& state,
+		BusSpeed speed,
 		size_t& ui_width,
 		USB2PCSWaveform* cap,
 		USB2PMAWaveform* din,
 		size_t& count,
 		int64_t& offset,
-		uint8_t& data);
+		uint8_t& data,
+		bool& first
+		);
 
 	void RefreshIterationData(
 		size_t nin,
 		size_t nlast,
 		DecodeState& state,
+		BusSpeed speed,
 		size_t& ui_width,
 		USB2PCSWaveform* cap,
 		USB2PMAWaveform* din,

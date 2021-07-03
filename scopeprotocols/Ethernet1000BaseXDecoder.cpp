@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -92,7 +92,7 @@ void Ethernet1000BaseXDecoder::Refresh()
 	auto cap = new EthernetWaveform;
 	cap->m_timescale = data->m_timescale;
 	cap->m_startTimestamp = data->m_startTimestamp;
-	cap->m_startPicoseconds = data->m_startPicoseconds;
+	cap->m_startFemtoseconds = data->m_startFemtoseconds;
 
 	size_t len = data->m_samples.size();
 	for(size_t i=0; i < len; i++)

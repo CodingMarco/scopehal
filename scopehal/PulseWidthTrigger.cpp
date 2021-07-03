@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -31,6 +31,7 @@
 #include "PulseWidthTrigger.h"
 #include "LeCroyOscilloscope.h"
 #include "TektronixOscilloscope.h"
+#include "SiglentSCPIOscilloscope.h"
 
 using namespace std;
 
@@ -38,14 +39,11 @@ using namespace std;
 // Construction / destruction
 
 PulseWidthTrigger::PulseWidthTrigger(Oscilloscope* scope)
-	: EdgeTrigger(scope)
-	, m_conditionname("Condition")
-	, m_lowername("Lower Bound")
-	, m_uppername("Upper Bound")
+	: EdgeTrigger(scope), m_conditionname("Condition"), m_lowername("Lower Bound"), m_uppername("Upper Bound")
 {
-	m_parameters[m_lowername] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_PS));
+	m_parameters[m_lowername] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_FS));
 
-	m_parameters[m_uppername] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_PS));
+	m_parameters[m_uppername] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_FS));
 
 	m_parameters[m_conditionname] = FilterParameter(FilterParameter::TYPE_ENUM, Unit(Unit::UNIT_COUNTS));
 	m_parameters[m_conditionname].AddEnumValue("Less than", CONDITION_LESS);
@@ -53,7 +51,7 @@ PulseWidthTrigger::PulseWidthTrigger(Oscilloscope* scope)
 	m_parameters[m_conditionname].AddEnumValue("Between", CONDITION_BETWEEN);
 
 	//Some modes are only supported by certain vendors
-	if(dynamic_cast<LeCroyOscilloscope*>(scope) != NULL)
+	if((dynamic_cast<LeCroyOscilloscope*>(scope) != NULL) || (dynamic_cast<SiglentSCPIOscilloscope*>(scope) != NULL))
 		m_parameters[m_conditionname].AddEnumValue("Not between", CONDITION_NOT_BETWEEN);
 	if(dynamic_cast<TektronixOscilloscope*>(scope) != NULL)
 	{
@@ -65,7 +63,6 @@ PulseWidthTrigger::PulseWidthTrigger(Oscilloscope* scope)
 
 PulseWidthTrigger::~PulseWidthTrigger()
 {
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

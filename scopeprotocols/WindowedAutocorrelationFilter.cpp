@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -50,12 +50,12 @@ WindowedAutocorrelationFilter::WindowedAutocorrelationFilter(const string& color
 	m_max = -FLT_MAX;
 
 	m_windowName = "Window";
-	m_parameters[m_windowName] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_PS));
-	m_parameters[m_windowName].SetFloatVal(400000);
+	m_parameters[m_windowName] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_FS));
+	m_parameters[m_windowName].SetFloatVal(400e6);
 
 	m_periodName = "Period";
-	m_parameters[m_periodName] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_PS));
-	m_parameters[m_periodName].SetFloatVal(3600000);
+	m_parameters[m_periodName] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_FS));
+	m_parameters[m_periodName].SetFloatVal(3.6e9);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -104,7 +104,6 @@ bool WindowedAutocorrelationFilter::NeedsConfig()
 void WindowedAutocorrelationFilter::SetDefaultName()
 {
 	char hwname[256];
-	Unit ps(Unit::UNIT_PS);
 	snprintf(hwname, sizeof(hwname), "WindowedAutocorrelation(%s, %s, %s, %s)",
 		GetInputDisplayName(0).c_str(),
 		GetInputDisplayName(1).c_str(),
@@ -158,7 +157,7 @@ void WindowedAutocorrelationFilter::Refresh()
 	}
 
 	//Set up the output waveform
-	auto cap = new AnalogWaveform;
+	auto cap = SetupOutputWaveform(din_i, 0, 0, 2*period_samples);
 
 	size_t end = len - 2*period_samples;
 	float vmax = -FLT_MAX;
@@ -181,9 +180,7 @@ void WindowedAutocorrelationFilter::Refresh()
 		vmax = max(vmax, v);
 		vmin = min(vmin, v);
 
-		cap->m_samples.push_back(v);
-		cap->m_offsets.push_back(din_i->m_offsets[i]);
-		cap->m_durations.push_back(din_i->m_durations[i]);
+		cap->m_samples[i] = v;
 	}
 
 	//Calculate bounds
@@ -191,11 +188,4 @@ void WindowedAutocorrelationFilter::Refresh()
 	m_min = min(m_min, vmin);
 	m_range = (m_max - m_min) * 1.05;
 	m_offset = ( (m_max - m_min)/2 + m_min );
-
-	//Copy our time scales from the input
-	cap->m_timescale 		= din_i->m_timescale;
-	cap->m_startTimestamp 	= din_i->m_startTimestamp;
-	cap->m_startPicoseconds = din_i->m_startPicoseconds;
-
-	SetData(cap, 0);
 }

@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -125,7 +125,7 @@ bool SignalGeneratorOscilloscope::AcquireData()
 	auto waveform = m_bufmodel->SimulatePRBS(
 		rand(),
 		CORNER_TYP,
-		1e12 / m_rate,
+		FS_PER_SECOND / m_rate,
 		m_depth,
 		80			//1.25 Gbps
 		);
@@ -169,6 +169,11 @@ void SignalGeneratorOscilloscope::Stop()
 	m_triggerOneShot = false;
 }
 
+void SignalGeneratorOscilloscope::ForceTrigger()
+{
+	StartSingleTrigger();
+}
+
 bool SignalGeneratorOscilloscope::IsTriggerArmed()
 {
 	return m_triggerArmed;
@@ -190,6 +195,13 @@ void SignalGeneratorOscilloscope::EnableChannel(size_t i)
 void SignalGeneratorOscilloscope::DisableChannel(size_t i)
 {
 	m_channelsEnabled[i] = false;
+}
+
+vector<OscilloscopeChannel::CouplingType> SignalGeneratorOscilloscope::GetAvailableCouplings(size_t /*i*/)
+{
+	vector<OscilloscopeChannel::CouplingType> ret;
+	ret.push_back(OscilloscopeChannel::COUPLE_DC_50);
+	return ret;
 }
 
 OscilloscopeChannel::CouplingType SignalGeneratorOscilloscope::GetChannelCoupling(size_t i)

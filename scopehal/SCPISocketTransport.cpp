@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -49,7 +49,7 @@ SCPISocketTransport::SCPISocketTransport(const string& args)
 	{
 		//default if port not specified
 		m_hostname = args;
-		m_port = 1861;
+		m_port = 5025;
 	}
 	else
 	{
@@ -57,6 +57,19 @@ SCPISocketTransport::SCPISocketTransport(const string& args)
 		m_port = port;
 	}
 
+	SharedCtorInit();
+}
+
+SCPISocketTransport::SCPISocketTransport(const string& hostname, unsigned short port)
+	: m_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+	, m_hostname(hostname)
+	, m_port(port)
+{
+	SharedCtorInit();
+}
+
+void SCPISocketTransport::SharedCtorInit()
+{
 	LogDebug("Connecting to SCPI oscilloscope at %s:%d\n", m_hostname.c_str(), m_port);
 
 	if(!m_socket.Connect(m_hostname, m_port))
@@ -73,6 +86,12 @@ SCPISocketTransport::SCPISocketTransport(const string& args)
 	{
 		m_socket.Close();
 		LogError("Couldn't disable Nagle\n");
+		return;
+	}
+	if(!m_socket.DisableDelayedACK())
+	{
+		m_socket.Close();
+		LogError("Couldn't disable delayed ACK\n");
 		return;
 	}
 }
@@ -126,14 +145,22 @@ string SCPISocketTransport::ReadReply(bool endOnSemicolon)
 	return ret;
 }
 
+void SCPISocketTransport::FlushRXBuffer(void)
+
+{
+	m_socket.FlushRxBuffer();
+}
+
 void SCPISocketTransport::SendRawData(size_t len, const unsigned char* buf)
 {
 	m_socket.SendLooped(buf, len);
 }
 
-void SCPISocketTransport::ReadRawData(size_t len, unsigned char* buf)
+size_t SCPISocketTransport::ReadRawData(size_t len, unsigned char* buf)
 {
-	m_socket.RecvLooped(buf, len);
+	if(!m_socket.RecvLooped(buf, len))
+		return 0;
+	return len;
 }
 
 bool SCPISocketTransport::IsCommandBatchingSupported()

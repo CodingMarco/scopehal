@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -115,6 +115,24 @@ bool UpsampleFilter::NeedsConfig()
 	return true;
 }
 
+double UpsampleFilter::GetOffset()
+{
+	auto chan = m_inputs[0].m_channel;
+	if(chan == NULL)
+		return 0;
+	else
+		return chan->GetOffset();
+}
+
+double UpsampleFilter::GetVoltageRange()
+{
+	auto chan = m_inputs[0].m_channel;
+	if(chan == NULL)
+		return 0;
+	else
+		return chan->GetVoltageRange();
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Actual decoder logic
 
@@ -190,7 +208,7 @@ void UpsampleFilter::Refresh()
 	//Copy our time scales from the input, and correct for the upsampling
 	cap->m_timescale = din->m_timescale / upsample_factor;
 	cap->m_startTimestamp = din->m_startTimestamp;
-	cap->m_startPicoseconds = din->m_startPicoseconds;
+	cap->m_startFemtoseconds = din->m_startFemtoseconds;
 
 	SetData(cap, 0);
 }

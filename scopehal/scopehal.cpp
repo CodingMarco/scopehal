@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -43,6 +43,7 @@
 #include "KeysightOscilloscope.h"
 #include "DemoOscilloscope.h"
 #include "LeCroyOscilloscope.h"
+#include "PicoOscilloscope.h"
 #include "RigolOscilloscope.h"
 #include "RohdeSchwarzOscilloscope.h"
 #include "SignalGeneratorOscilloscope.h"
@@ -52,6 +53,7 @@
 #include "DropoutTrigger.h"
 #include "EdgeTrigger.h"
 #include "GlitchTrigger.h"
+#include "NthEdgeBurstTrigger.h"
 #include "PulseWidthTrigger.h"
 #include "RuntTrigger.h"
 #include "SlewRateTrigger.h"
@@ -65,12 +67,26 @@
 #include <shlwapi.h>
 #endif
 
+#ifdef HAVE_CLFFT
+#include <clFFT.h>
+#endif
+
 using namespace std;
 
 bool g_hasAvx512F = false;
 bool g_hasAvx512DQ = false;
 bool g_hasAvx512VL = false;
 bool g_hasAvx2 = false;
+bool g_hasFMA = false;
+bool g_disableOpenCL = false;
+
+vector<string> g_searchPaths;
+
+#ifdef HAVE_OPENCL
+cl::Context* g_clContext = NULL;
+vector<cl::Device> g_contextDevices;
+size_t g_maxClLocalSizeX = 0;
+#endif
 
 AlignedAllocator<float, 32> g_floatVectorAllocator;
 
@@ -91,6 +107,9 @@ void TransportStaticInit()
 #endif
 }
 
+/**
+	@brief Static initialization for CPU feature flags
+ */
 void DetectCPUFeatures()
 {
 	LogDebug("Detecting CPU features...\n");
@@ -101,9 +120,12 @@ void DetectCPUFeatures()
 	g_hasAvx512VL = __builtin_cpu_supports("avx512vl");
 	g_hasAvx512DQ = __builtin_cpu_supports("avx512dq");
 	g_hasAvx2 = __builtin_cpu_supports("avx2");
+	g_hasFMA = __builtin_cpu_supports("fma");
 
 	if(g_hasAvx2)
 		LogDebug("* AVX2\n");
+	if(g_hasFMA)
+		LogDebug("* FMA\n");
 	if(g_hasAvx512F)
 		LogDebug("* AVX512F\n");
 	if(g_hasAvx512DQ)
@@ -111,6 +133,223 @@ void DetectCPUFeatures()
 	if(g_hasAvx512VL)
 		LogDebug("* AVX512VL\n");
 	LogDebug("\n");
+#if defined(_WIN32) && defined(__GNUC__) // AVX2 is temporarily disabled on MingW64/GCC until this in resolved: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=54412
+	if (g_hasAvx2 || g_hasAvx512F || g_hasAvx512DQ || g_hasAvx512VL)
+	{
+		g_hasAvx2 = g_hasAvx512F = g_hasAvx512DQ = g_hasAvx512VL = false;
+		LogWarning("AVX2/AVX512 detected but disabled on MinGW64/GCC (see https://github.com/azonenberg/scopehal-apps/issues/295)\n");
+	}
+#endif
+}
+
+/**
+	@brief Static initialization for OpenCL
+ */
+void DetectGPUFeatures()
+{
+	#ifdef HAVE_OPENCL
+		try
+		{
+			LogDebug("Detecting OpenCL devices...\n");
+
+			LogIndenter li;
+
+			if(g_disableOpenCL)
+			{
+				LogNotice("g_disableOpenCL set, disabling OpenCL\n");
+				return;
+			}
+
+			//Find platforms and print info
+			vector<cl::Platform> platforms;
+			cl::Platform::get(&platforms);
+			if(platforms.empty())
+			{
+				LogNotice("No platforms found, disabling OpenCL\n");
+				return;
+			}
+			else
+			{
+				for(size_t i=0; i<platforms.size(); i++)
+				{
+					LogDebug("Platform %zu\n", i);
+					LogIndenter li2;
+
+					string name;
+					string profile;
+					string vendor;
+					string version;
+					platforms[i].getInfo(CL_PLATFORM_NAME, &name);
+					platforms[i].getInfo(CL_PLATFORM_PROFILE, &profile);
+					platforms[i].getInfo(CL_PLATFORM_VENDOR, &vendor);
+					platforms[i].getInfo(CL_PLATFORM_VERSION, &version);
+					LogDebug("CL_PLATFORM_NAME    = %s\n", name.c_str());
+					LogDebug("CL_PLATFORM_PROFILE = %s\n", profile.c_str());
+					LogDebug("CL_PLATFORM_VENDOR  = %s\n", vendor.c_str());
+					LogDebug("CL_PLATFORM_VERSION = %s\n", version.c_str());
+
+					vector<cl::Device> devices;
+					platforms[i].getDevices(CL_DEVICE_TYPE_GPU, &devices);
+					if(devices.empty())
+						LogDebug("No GPUs found\n");
+					for(size_t j=0; j<devices.size(); j++)
+					{
+						LogDebug("Device %zu\n", j);
+						LogIndenter li3;
+
+						string dname;
+						string dcvers;
+						string dprof;
+						string dvendor;
+						string dversion;
+						string ddversion;
+						string extensions;
+						unsigned long globalCacheSize;
+						unsigned long globalCacheLineSize;
+						unsigned long globalMemSize;
+						unsigned long localMemSize;
+						unsigned int maxClock;
+						unsigned int maxComputeUnits;
+						unsigned int maxConstantArgs;
+						unsigned long maxConstantBuffer;
+						unsigned long maxMemAllocSize;
+						size_t maxParameterSize;
+						size_t maxWorkGroupSize;
+						size_t maxWorkItemSizes[3];
+						devices[j].getInfo(CL_DEVICE_NAME, &dname);
+						devices[j].getInfo(CL_DEVICE_OPENCL_C_VERSION, &dcvers);
+						devices[j].getInfo(CL_DEVICE_PROFILE, &dprof);
+						devices[j].getInfo(CL_DEVICE_VENDOR, &dvendor);
+						devices[j].getInfo(CL_DEVICE_VERSION, &dversion);
+						devices[j].getInfo(CL_DRIVER_VERSION, &ddversion);
+						devices[j].getInfo(CL_DEVICE_EXTENSIONS, &extensions);
+						devices[j].getInfo(CL_DEVICE_GLOBAL_MEM_CACHE_SIZE, &globalCacheSize);
+						devices[j].getInfo(CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, &globalCacheLineSize);
+						devices[j].getInfo(CL_DEVICE_GLOBAL_MEM_SIZE, &globalMemSize);
+						devices[j].getInfo(CL_DEVICE_LOCAL_MEM_SIZE, &localMemSize);
+						devices[j].getInfo(CL_DEVICE_MAX_CLOCK_FREQUENCY, &maxClock);
+						devices[j].getInfo(CL_DEVICE_MAX_COMPUTE_UNITS, &maxComputeUnits);
+						devices[j].getInfo(CL_DEVICE_MAX_CONSTANT_ARGS, &maxConstantArgs);
+						devices[j].getInfo(CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE, &maxConstantBuffer);
+						devices[j].getInfo(CL_DEVICE_MAX_MEM_ALLOC_SIZE, &maxMemAllocSize);
+						devices[j].getInfo(CL_DEVICE_MAX_PARAMETER_SIZE, &maxParameterSize);
+						devices[j].getInfo(CL_DEVICE_MAX_WORK_GROUP_SIZE, &maxWorkGroupSize);
+						devices[j].getInfo(CL_DEVICE_MAX_WORK_ITEM_SIZES, &maxWorkItemSizes);
+
+						float k = 1024;
+						float m = k*k;
+						float g = m*k;
+
+						LogDebug("CL_DRIVER_VERSION                   = %s\n", ddversion.c_str());
+						LogDebug("CL_DEVICE_NAME                      = %s\n", dname.c_str());
+						LogDebug("CL_DEVICE_OPENCL_C_VERSION          = %s\n", dcvers.c_str());
+						LogDebug("CL_DEVICE_PROFILE                   = %s\n", dprof.c_str());
+						LogDebug("CL_DEVICE_VENDOR                    = %s\n", dvendor.c_str());
+						LogDebug("CL_DEVICE_VERSION                   = %s\n", dversion.c_str());
+						LogDebug("CL_DEVICE_GLOBAL_MEM_CACHE_SIZE     = %.3f MB\n", globalCacheSize / m);
+						LogDebug("CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE = %lu\n", globalCacheLineSize);
+						LogDebug("CL_DEVICE_GLOBAL_MEM_SIZE           = %.2f GB\n", globalMemSize / g);
+						LogDebug("CL_DEVICE_LOCAL_MEM_SIZE            = %.2f kB\n", localMemSize / k);
+						LogDebug("CL_DEVICE_MAX_CLOCK_FREQUENCY       = %u MHz\n", maxClock);
+						LogDebug("CL_DEVICE_MAX_COMPUTE_UNITS         = %u\n", maxComputeUnits);
+						LogDebug("CL_DEVICE_MAX_CONSTANT_ARGS         = %u\n", maxConstantArgs);
+						LogDebug("CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE  = %.2f kB\n", maxConstantBuffer / k);
+						LogDebug("CL_DEVICE_MAX_MEM_ALLOC_SIZE        = %.2f GB\n", maxMemAllocSize / g);
+						LogDebug("CL_DEVICE_MAX_PARAMETER_SIZE        = %zu\n", maxParameterSize);
+						LogDebug("CL_DEVICE_MAX_WORK_GROUP_SIZE       = %zu\n", maxWorkGroupSize);
+						LogDebug("CL_DEVICE_MAX_WORK_ITEM_SIZES       = %zu, %zu, %zu\n",
+							maxWorkItemSizes[0], maxWorkItemSizes[1], maxWorkItemSizes[2]);
+
+						vector<string> extensionlist;
+						string tmp;
+						for(size_t f=0; f<extensions.size(); f++)
+						{
+							if(isspace(extensions[f]))
+							{
+								if(tmp != "")
+									extensionlist.push_back(tmp);
+								tmp = "";
+							}
+							else
+								tmp += extensions[f];
+						}
+
+						{
+							LogDebug("CL_DEVICE_EXTENSIONS:\n");
+							LogIndenter li4;
+							for(auto e : extensionlist)
+								LogDebug("%s\n", e.c_str());
+						}
+
+						//For now, create a context on the first device of the first detected platform
+						//and hope for the best.
+						//TODO: multi-device support?
+						if(!g_clContext)
+						{
+							vector<cl::Device> devs;
+							devs.push_back(devices[0]);
+
+							//Passing CL_CONTEXT_PLATFORM as parameters seems to make context creation fail. Weird.
+							g_clContext = new cl::Context(devs, NULL, NULL, NULL);
+							g_contextDevices = g_clContext->getInfo<CL_CONTEXT_DEVICES>();
+
+							//Save some settings about the OpenCL implementation so that we can tune appropriately
+							g_maxClLocalSizeX = maxWorkItemSizes[0];
+						}
+					}
+				}
+			}
+		}
+		catch(const cl::Error& e)
+		{
+			//CL_PLATFORM_NOT_FOUND_KHR is an expected error if there's no GPU on the system
+			if( (string(e.what()) == "clGetPlatformIDs") && (e.err() == -1001) )
+				LogNotice("No platforms found, disabling OpenCL\n");
+			else
+				LogError("OpenCL error: %s (%d)\n", e.what(), e.err() );
+			delete g_clContext;
+			g_clContext = NULL;
+			return;
+		}
+
+		#ifdef HAVE_CLFFT
+
+			clfftSetupData data;
+			clfftInitSetupData(&data);
+			if(CLFFT_SUCCESS != clfftSetup(&data))
+			{
+				LogError("clFFT init failed, aborting\n");
+				abort();
+			}
+
+			cl_uint major;
+			cl_uint minor;
+			cl_uint patch;
+			if(CLFFT_SUCCESS != clfftGetVersion(&major, &minor, &patch))
+			{
+				LogError("clFFT version query failed, aborting\n");
+				abort();
+			}
+			LogDebug("clFFT version: %d.%d.%d\n", major, minor, patch);
+
+		#else
+			LogNotice("clFFT support: not present at compile time\n");
+		#endif
+
+	#else
+		LogNotice("OpenCL support: not present at compile time. GPU acceleration disabled.\n");
+	#endif
+
+	LogDebug("\n");
+}
+
+void ScopehalStaticCleanup()
+{
+	#ifdef HAVE_OPENCL
+	#ifdef HAVE_CLFFT
+	clfftTeardown();
+	#endif
+	#endif
 }
 
 /**
@@ -118,7 +357,9 @@ void DetectCPUFeatures()
  */
 void DriverStaticInit()
 {
+	InitializeSearchPaths();
 	DetectCPUFeatures();
+	DetectGPUFeatures();
 
 	AddDriverClass(AgilentOscilloscope);
 	AddDriverClass(AntikernelLabsOscilloscope);
@@ -126,6 +367,7 @@ void DriverStaticInit()
 	AddDriverClass(HPOscilloscope);
 	AddDriverClass(KeysightOscilloscope);
 	AddDriverClass(DemoOscilloscope);
+	AddDriverClass(PicoOscilloscope);
 	AddDriverClass(RigolOscilloscope);
 	AddDriverClass(RohdeSchwarzOscilloscope);
 	AddDriverClass(LeCroyOscilloscope);
@@ -136,6 +378,7 @@ void DriverStaticInit()
 	AddTriggerClass(DropoutTrigger);
 	AddTriggerClass(EdgeTrigger);
 	AddTriggerClass(GlitchTrigger);
+	AddTriggerClass(NthEdgeBurstTrigger);
 	AddTriggerClass(PulseWidthTrigger);
 	AddTriggerClass(RuntTrigger);
 	AddTriggerClass(SlewRateTrigger);
@@ -413,4 +656,193 @@ string to_string_sci(double d)
 	char tmp[32];
 	snprintf(tmp, sizeof(tmp), "%e", d);
 	return tmp;
+}
+
+/**
+	@brief Like std::to_string, but output in hex
+ */
+string to_string_hex(uint64_t n, bool zeropad, int len)
+{
+	char format[32];
+	if(zeropad)
+		snprintf(format, sizeof(format), "%%0%dlx", len);
+	else if(len > 0)
+		snprintf(format, sizeof(format), "%%%dlx", len);
+	else
+		snprintf(format, sizeof(format), "%%lx");
+
+	char tmp[32];
+	snprintf(tmp, sizeof(tmp), format, n);
+	return tmp;
+}
+
+/**
+	@brief Rounds a 64-bit integer up to the next power of 2
+ */
+uint64_t next_pow2(uint64_t v)
+{
+#ifdef __GNUC__
+	if(v == 1)
+		return 1;
+	else
+		return 1 << (64 - __builtin_clzl(v-1));
+#else
+	v--;
+	v |= v >> 1;
+	v |= v >> 2;
+	v |= v >> 4;
+	v |= v >> 8;
+	v |= v >> 16;
+	v |= v >> 32;
+	v++;
+	return v;
+#endif
+}
+
+/**
+	@brief Returns the contents of a file
+ */
+string ReadFile(const string& path)
+{
+	//Read the file
+	FILE* fp = fopen(path.c_str(), "rb");
+	if(!fp)
+	{
+		LogWarning("ReadFile: Could not open file \"%s\"\n", path.c_str());
+		return "";
+	}
+	fseek(fp, 0, SEEK_END);
+	size_t fsize = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	char* buf = new char[fsize + 1];
+	if(fsize != fread(buf, 1, fsize, fp))
+	{
+		LogWarning("ReadFile: Could not read file \"%s\"\n", path.c_str());
+		delete[] buf;
+		fclose(fp);
+		return "";
+	}
+	buf[fsize] = 0;
+	fclose(fp);
+
+	string ret(buf, fsize);
+	delete[] buf;
+
+	return ret;
+}
+
+void InitializeSearchPaths()
+{
+	string binRootDir;
+	//Search in the directory of the glscopeclient binary first
+#ifdef _WIN32
+	TCHAR binPath[MAX_PATH];
+	if(GetModuleFileName(NULL, binPath, MAX_PATH) == 0)
+		LogError("Error: GetModuleFileName() failed.\n");
+	else if(!PathRemoveFileSpec(binPath) )
+		LogError("Error: PathRemoveFileSpec() failed.\n");
+	else
+	{
+		g_searchPaths.push_back(binPath);
+		// On mingw, binPath would typically be /mingw64/bin now
+		//and our data files in /mingw64/share. Strip back one more layer
+		// of hierarchy so we can start appending.
+		binRootDir = dirname(binPath);
+	}
+#else
+	char binDir[1024] = {0};
+	ssize_t readlinkReturn = readlink("/proc/self/exe", binDir, (sizeof(binDir) - 1) );
+	if ( readlinkReturn <= 0 )
+		LogError("Error: readlink() failed.\n");
+	else if ( (unsigned) readlinkReturn > (sizeof(binDir) - 1) )
+		LogError("Error: readlink() returned a path larger than our buffer.\n");
+	else
+	{
+		g_searchPaths.push_back(dirname(binDir));
+		binRootDir = dirname(binDir);
+	}
+#endif
+	// Add the share directories associated with the binary location
+	if(binRootDir.size() > 0)
+	{
+		g_searchPaths.push_back(binRootDir + "/share/glscopeclient");
+		g_searchPaths.push_back(binRootDir + "/share/scopehal");
+	}
+
+	//Local directories preferred over system ones
+#ifndef _WIN32
+	string home = getenv("HOME");
+	g_searchPaths.push_back(home + "/.glscopeclient");
+	g_searchPaths.push_back(home + "/.scopehal");
+	g_searchPaths.push_back("/usr/local/share/glscopeclient");
+	g_searchPaths.push_back("/usr/local/share/scopehal");
+	g_searchPaths.push_back("/usr/share/glscopeclient");
+	g_searchPaths.push_back("/usr/share/scopehal");
+
+	//for macports
+	g_searchPaths.push_back("/opt/local/share/glscopeclient");
+	g_searchPaths.push_back("/opt/local/share/scopehal");
+#endif
+
+	//TODO: add system directories for Windows (%appdata% etc)?
+	//The current strategy of searching the binary directory should work fine in the common case
+	//of installing binaries and data files all in one directory under Program Files.
+}
+
+/**
+	@brief Locates and returns the contents of a data file
+ */
+string ReadDataFile(const string& relpath)
+{
+	FILE* fp = NULL;
+	for(auto dir : g_searchPaths)
+	{
+		string path = dir + "/" + relpath;
+		fp = fopen(path.c_str(), "rb");
+		if(fp)
+			break;
+	}
+
+	if(!fp)
+	{
+		LogWarning("ReadDataFile: Could not open file \"%s\"\n", relpath.c_str());
+		return "";
+	}
+	fseek(fp, 0, SEEK_END);
+	size_t fsize = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	char* buf = new char[fsize + 1];
+	if(fsize != fread(buf, 1, fsize, fp))
+	{
+		LogWarning("ReadDataFile: Could not read file \"%s\"\n", relpath.c_str());
+		delete[] buf;
+		fclose(fp);
+		return "";
+	}
+	buf[fsize] = 0;
+	fclose(fp);
+
+	string ret(buf, fsize);
+	delete[] buf;
+
+	return ret;
+}
+
+/**
+	@brief Locates a data file
+ */
+string FindDataFile(const string& relpath)
+{
+	for(auto dir : g_searchPaths)
+	{
+		string path = dir + "/" + relpath;
+		FILE* fp = fopen(path.c_str(), "rb");
+		if(fp)
+		{
+			fclose(fp);
+			return path;
+		}
+	}
+
+	return "";
 }

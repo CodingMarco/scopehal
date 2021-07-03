@@ -1,9 +1,8 @@
-
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -44,10 +43,13 @@ USB2PMADecoder::USB2PMADecoder(const string& color)
 	CreateInput("D+");
 	CreateInput("D-");
 
-	//TODO: make this an enum/bool
-	m_speedname = "Full Speed";
-	m_parameters[m_speedname] = FilterParameter(FilterParameter::TYPE_INT, Unit(Unit::UNIT_COUNTS));
-	m_parameters[m_speedname].SetIntVal(1);
+	m_speedname = "Speed";
+
+	m_parameters[m_speedname] = FilterParameter(FilterParameter::TYPE_ENUM, Unit(Unit::UNIT_COUNTS));
+	m_parameters[m_speedname].AddEnumValue("Low (1.5 Mbps)", SPEED_LOW);
+	m_parameters[m_speedname].AddEnumValue("Full (12 Mbps)", SPEED_FULL);
+	m_parameters[m_speedname].AddEnumValue("High (480 Mbps)", SPEED_HIGH);
+	m_parameters[m_speedname].SetIntVal(SPEED_FULL);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -115,37 +117,58 @@ void USB2PMADecoder::Refresh()
 	size_t len = min(din_p->m_samples.size(), din_n->m_samples.size());
 
 	//Figure out our speed so we know what's going on
-	int speed = m_parameters[m_speedname].GetIntVal();
+	auto speed = static_cast<Speed>(m_parameters[m_speedname].GetIntVal());
+
+	//Set appropriate thresholds for different speeds
+	auto threshold = (speed == SPEED_HIGH) ? 0.2 : 0.4;
+	int64_t transition_time;
+	switch(speed)
+	{
+	case SPEED_HIGH:
+		// 1 UI width
+		transition_time = 2083000;
+		break;
+	case SPEED_FULL:
+		// TFST = 14ns (Section 7.1.4.1)
+		transition_time = 14000000;
+		break;
+	case SPEED_LOW:
+		// TLST = 210ns (Section 7.1.4.1)
+		transition_time = 210000000;
+		break;
+	}
+
 
 	//Figure out the line state for each input (no clock recovery yet)
 	auto cap = new USB2PMAWaveform;
 	for(size_t i=0; i<len; i++)
 	{
-		bool bp = (din_p->m_samples[i] > 0.4);
-		bool bn = (din_n->m_samples[i] > 0.4);
+		bool bp = (din_p->m_samples[i] > threshold);
+		bool bn = (din_n->m_samples[i] > threshold);
+		float vdiff = din_p->m_samples[i] - din_n->m_samples[i];
 
 		USB2PMASymbol::SegmentType type = USB2PMASymbol::TYPE_SE1;
-		if(bp && bn)
-			type = USB2PMASymbol::TYPE_SE1;
-		else if(!bp && !bn)
-			type = USB2PMASymbol::TYPE_SE0;
-		else
+		if(fabs(vdiff) > threshold)
 		{
-			if(speed == 1)
+			if( (speed == SPEED_FULL) || (speed == SPEED_HIGH) )
 			{
-				if(bp && !bn)
+				if(vdiff > 0)
 					type = USB2PMASymbol::TYPE_J;
 				else
 					type = USB2PMASymbol::TYPE_K;
 			}
 			else
 			{
-				if(bp && !bn)
+				if(vdiff > 0)
 					type = USB2PMASymbol::TYPE_K;
 				else
 					type = USB2PMASymbol::TYPE_J;
 			}
 		}
+		else if(bp && bn)
+			type = USB2PMASymbol::TYPE_SE1;
+		else
+			type = USB2PMASymbol::TYPE_SE0;
 
 		//First sample goes as-is
 		if(cap->m_samples.empty())
@@ -166,10 +189,10 @@ void USB2PMADecoder::Refresh()
 		}
 
 		//Ignore SE0/SE1 states during transitions.
-		int64_t last_ps = cap->m_durations[iold] * din_p->m_timescale;
+		int64_t last_fs = cap->m_durations[iold] * din_p->m_timescale;
 		if(
 			( (oldtype == USB2PMASymbol::TYPE_SE0) || (oldtype == USB2PMASymbol::TYPE_SE1) ) &&
-			(last_ps < 100000))
+			(last_fs < transition_time))
 		{
 			cap->m_samples[iold].m_type = type;
 			cap->m_durations[iold] += din_p->m_durations[i];
@@ -188,7 +211,7 @@ void USB2PMADecoder::Refresh()
 	//Use the first trace's timestamp as our start time if they differ
 	cap->m_timescale = din_p->m_timescale;
 	cap->m_startTimestamp = din_p->m_startTimestamp;
-	cap->m_startPicoseconds = din_p->m_startPicoseconds;
+	cap->m_startFemtoseconds = din_p->m_startFemtoseconds;
 }
 
 Gdk::Color USB2PMADecoder::GetColor(int i)

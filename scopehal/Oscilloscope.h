@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -81,8 +81,10 @@ public:
 
 		In order to see updates made by the user at the front panel, the cache must be flushed.
 
-		Cache flushing is recommended every second or so during interactive operation.
-		In scripted/ATE environments where nobody should be touching the instrument, longer intervals may be used.
+		Cache flushing is recommended to be manually triggered during interactive operation if there is no way to
+		push updates from the scope to the driver.
+
+		In scripted/ATE environments where nobody should be touching the instrument, flushing is typically not needed.
 
 		The default implementation of this function does nothing since the base class provides no caching.
 		If a derived class caches configuration, it should override this function to clear any cached data.
@@ -138,7 +140,7 @@ public:
 		@return False if the channel cannot currently be used
 				(due to interleave conflicts or other hardware limitations).
 
-				True if the channel is available.
+				True if the channel is available or is already enabled.
 
 		@param i Zero-based index of channel
 
@@ -168,6 +170,13 @@ public:
 		@param i Zero-based index of channel
 	 */
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type) =0;
+
+	/**
+		@brief Gets the set of legal coupling values for an input channel
+
+		@param i	Zero-based index of channel
+	 */
+	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings(size_t i) =0;
 
 	/**
 		@brief Gets the display name for a channel. This is an arbitrary user-selected string.
@@ -274,6 +283,61 @@ public:
 	virtual void SetChannelVoltageRange(size_t i, double range) =0;
 
 	/**
+		@brief Determines if a channel has a probe connected which supports the "auto zero" feature.
+
+		This is typically true for power rail and differential probes and false for most others.
+
+		@param i			Zero-based index of channel
+	 */
+	virtual bool CanAutoZero(size_t i);
+
+	/**
+		@brief Performs an "auto zero" cycle on the attached active probe, if supported by the hardware
+
+		@param i			Zero-based index of channel
+	 */
+	virtual void AutoZero(size_t i);
+
+	/**
+		@brief Returns the name of the probe connected to the scope, if possible.
+
+		If a passive or no probe is connected, or the instrument driver does not support probe identification,
+		an empty string may be returned.
+
+		@param i			Zero-based index of channel
+	 */
+	virtual std::string GetProbeName(size_t i);
+
+	/**
+		@brief Checks if a channel has an input multiplexer
+
+		@param i			Zero-based index of channel
+	 */
+	virtual bool HasInputMux(size_t i);
+
+	/**
+		@brief Gets the setting for a channel's input mux (if it has one)
+
+		@param i			Zero-based index of channel
+	 */
+	virtual size_t GetInputMuxSetting(size_t i);
+
+	/**
+		@brief Gets names for the input mux ports of a channel
+
+		@param i			Zero-based index of channel
+	 */
+	virtual std::vector<std::string> GetInputMuxNames(size_t i);
+
+	/**
+		@brief Sets the input mux for a channel
+
+		@param i			Zero-based index of channel
+		@param select		Selector for the mux
+	 */
+	virtual void SetInputMux(size_t i, size_t select);
+
+	/**
 		@brief Gets the offset, in volts, for a given channel
 
 		@param i			Zero-based index of channel
@@ -288,6 +352,28 @@ public:
 	 */
 	virtual void SetChannelOffset(size_t i, double offset) =0;
 
+	/**
+		@brief Checks if a channel is capable of hardware polarity inversion
+
+		@param i			Zero-based index of channel
+	 */
+	virtual bool CanInvert(size_t i);
+
+	/**
+		@brief Enables hardware polarity inversion for a channel, if supported
+
+		@param i			Zero-based index of channel
+		@param invert		True to invert, false for normal operation
+	 */
+	virtual void Invert(size_t i, bool invert);
+
+	/**
+		@brief Checks if hardware polarity inversion is enabled for a channel
+
+		@param i			Zero-based index of channel
+	 */
+	virtual bool IsInverted(size_t i);
+
 	//Triggering
 	enum TriggerMode
 	{
@@ -300,7 +386,7 @@ public:
 		///Just got triggered, data is ready to read
 		TRIGGER_MODE_TRIGGERED,
 
-		///WAIT - waiting for something (not sure what this means, some Rigol scopes use it?)
+		///WAIT - not yet fully armed
 		TRIGGER_MODE_WAIT,
 
 		///Auto trigger - waiting for auto-trigger
@@ -314,6 +400,14 @@ public:
 		@brief Checks the curent trigger status.
 	 */
 	virtual Oscilloscope::TriggerMode PollTrigger() =0;
+
+	/**
+		@brief Checks if the trigger is armed, without altering internal state or checking caches.
+
+		The default implementation of this function simply calls PollTrigger(). This function should be overridden by
+		the driver class if PollTrigger() changes any internal driver state or updates caches.
+	 */
+	virtual bool PeekTriggerArmed();
 
 	/**
 		@brief Block until a trigger happens or a timeout elapses.
@@ -336,13 +430,17 @@ public:
 	 */
 	void SetTrigger(Trigger* trigger)
 	{
-		//If we have an old trigger that's not the same, free it
-		if(m_trigger != trigger)
-			delete m_trigger;
+		Trigger* old_trig = m_trigger;
 
 		//Set the new trigger and sync to hardware
 		m_trigger = trigger;
 		PushTrigger();
+
+		//Delete old trigger *after* pushing the new one.
+		//This prevents possible race conditions where we disable the current trigger channel before the new
+		//trigger is set.
+		if(old_trig != trigger)
+			delete old_trig;
 	}
 
 	/**
@@ -381,8 +479,8 @@ public:
 	/**
 		@brief Starts the instrument in continuous trigger mode.
 
-		This is normally not used for data-download applications, because of the risk of race conditions where the
-		instrument triggers during AcquireData() leading to some channels having stale and some having new data.
+		Most drivers will implement this as repeated calls to the "single trigger" function to avoid race conditions
+		when the instrument triggers halfway through downloading captured waveforms.
 	 */
 	virtual void Start() =0;
 
@@ -395,6 +493,13 @@ public:
 		@brief Stops triggering
 	 */
 	virtual void Stop() =0;
+
+	/**
+		@brief Forces a single acquisition as soon as possible.
+
+		Note that PollTrigger() may not return 'triggered' immediately, due to command processing latency.
+	 */
+	virtual void ForceTrigger() =0;
 
 	/**
 		@brief Checks if the trigger is currently armed
@@ -490,6 +595,33 @@ public:
 	 */
 	virtual void SetSampleRate(uint64_t rate) =0;
 
+	enum SamplingMode
+	{
+		REAL_TIME,
+		EQUIVALENT_TIME
+	};
+
+	/**
+		@brief Returns true if the requested sampling mode is available with the current instrument configuration.
+
+		The default implementation returns true for real-time only.
+	 */
+	virtual bool IsSamplingModeAvailable(SamplingMode mode);
+
+	/**
+		@brief Gets the current sampling mode of the instrument
+
+		The default implementation returns "real time"
+	 */
+	virtual SamplingMode GetSamplingMode();
+
+	/**
+		@brief Sets the current sampling mode of the instrument
+
+		The default implementation is a no-op.
+	 */
+	virtual void SetSamplingMode(SamplingMode mode);
+
 	/**
 		@brief Configures the instrument's clock source
 
@@ -504,7 +636,7 @@ public:
 	/**
 		@brief Sets the trigger offset
 
-		@param offset		Picoseconds from the start of the capture to the trigger point.
+		@param offset		Femtoseconds from the start of the capture to the trigger point.
 							Positive values mean the trigger is within the waveform.
 							Negative values mean there is a delay from the trigger point to the start of the waveform.
 	 */
@@ -519,7 +651,7 @@ public:
 		@brief Sets the deskew setting for a channel
 
 		@param channel		The channel to deskew
-		@param skew			Skew value, in picoseconds.
+		@param skew			Skew value, in femtoseconds.
 							Negative values move the channel earlier relative to the zero point.
 							Positive values move the channel later.
 
@@ -691,6 +823,25 @@ public:
 		@brief Load instrument and channel configuration from a save file
 	 */
 	virtual void LoadConfiguration(const YAML::Node& node, IDTable& idmap);
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Sample format conversion
+protected:
+	void Convert8BitSamples(
+		int64_t* offs, int64_t* durs, float* pout, int8_t* pin, float gain, float offset, size_t count, int64_t ibase);
+	void Convert8BitSamplesGeneric(
+		int64_t* offs, int64_t* durs, float* pout, int8_t* pin, float gain, float offset, size_t count, int64_t ibase);
+	void Convert8BitSamplesAVX2(
+		int64_t* offs, int64_t* durs, float* pout, int8_t* pin, float gain, float offset, size_t count, int64_t ibase);
+
+	void Convert16BitSamples(
+		int64_t* offs, int64_t* durs, float* pout, int16_t* pin, float gain, float offset, size_t count, int64_t ibase);
+	void Convert16BitSamplesGeneric(
+		int64_t* offs, int64_t* durs, float* pout, int16_t* pin, float gain, float offset, size_t count, int64_t ibase);
+	void Convert16BitSamplesAVX2(
+		int64_t* offs, int64_t* durs, float* pout, int16_t* pin, float gain, float offset, size_t count, int64_t ibase);
+	void Convert16BitSamplesFMA(
+		int64_t* offs, int64_t* durs, float* pout, int16_t* pin, float gain, float offset, size_t count, int64_t ibase);
 
 public:
 	bool HasPendingWaveforms();

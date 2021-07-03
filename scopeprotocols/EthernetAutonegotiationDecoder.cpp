@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -110,7 +110,7 @@ void EthernetAutonegotiationDecoder::Refresh()
 	{
 		bool sample_value = (din->m_samples[i] > 1.25);
 		int64_t tm = din->m_offsets[i] * din->m_timescale;
-		float dt = (tm - last_pulse) * 1e-6f;
+		float dt = (tm - last_pulse) * 1e-9f;
 
 		if(sample_value && !old_value)
 		{

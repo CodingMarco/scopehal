@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -42,6 +42,67 @@ public:
 	MockOscilloscope(const std::string& name, const std::string& vendor, const std::string& serial);
 	virtual ~MockOscilloscope();
 
+	//Capture file importing
+	bool LoadComplexUnknownFormat(const std::string& path, int64_t samplerate);
+	bool LoadComplexFloat32(const std::string& path, int64_t samplerate);
+	bool LoadComplexFloat64(const std::string& path, int64_t samplerate);
+	bool LoadComplexInt8(const std::string& path, int64_t samplerate);
+	bool LoadComplexInt16(const std::string& path, int64_t samplerate);
+	bool LoadCSV(const std::string& path);
+	bool LoadBIN(const std::string& path);
+	bool LoadVCD(const std::string& path);
+	bool LoadWAV(const std::string& path);
+
+	//Agilent/Keysight/Rigol binary capture structs
+	#pragma pack(push, 1)
+	struct FileHeader
+	{
+		char magic[2];		//File magic string ("AG" / "RG")
+		char version[2];	//File format version
+		uint32_t length;	//Length of file in bytes
+		uint32_t count;		//Number of waveforms
+	};
+
+	struct WaveHeader
+	{
+		uint32_t size;		//Waveform header length (0x8C)
+		uint32_t type;		//Waveform type
+		uint32_t buffers;	//Number of buffers
+		uint32_t samples;	//Number of samples
+		uint32_t averaging;	//Averaging count
+		float duration;		//Capture duration
+		double start;		//Display start time
+		double interval;	//Sample time interval
+		double origin;		//Capture origin time
+		uint32_t x;			//X axis unit
+		uint32_t y;			//Y axis unit
+		char date[16];		//Capture date
+		char time[16];		//Capture time
+		char hardware[24];	//Model and serial
+		char label[16];		//Waveform label
+		double holdoff;		//Trigger holdoff
+		uint32_t segment;	//Segment number
+	};
+
+	struct DataHeader
+	{
+		uint32_t size;		//Waveform data header length
+		short type;			//Sample data type
+		short depth;		//Sample bit depth
+		uint32_t length;	//Data buffer length
+	};
+	#pragma pack(pop)
+
+	Unit::UnitType units[7] = {
+		Unit::UNIT_COUNTS,	//Unused
+		Unit::UNIT_VOLTS,
+		Unit::UNIT_FS,
+		Unit::UNIT_COUNTS,	//"Constant"
+		Unit::UNIT_AMPS,
+		Unit::UNIT_DB,
+		Unit::UNIT_HZ
+	};
+
 	//not copyable or assignable
 	MockOscilloscope(const MockOscilloscope& rhs) =delete;
 	MockOscilloscope& operator=(const MockOscilloscope& rhs) =delete;
@@ -64,6 +125,7 @@ public:
 	virtual void DisableChannel(size_t i);
 	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i);
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type);
+	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings(size_t i);
 	virtual double GetChannelAttenuation(size_t i);
 	virtual void SetChannelAttenuation(size_t i, double atten);
 	virtual int GetChannelBandwidthLimit(size_t i);
@@ -80,6 +142,7 @@ public:
 	virtual void Start();
 	virtual void StartSingleTrigger();
 	virtual void Stop();
+	virtual void ForceTrigger();
 	virtual bool IsTriggerArmed();
 	virtual void PushTrigger();
 	virtual void PullTrigger();
@@ -102,6 +165,15 @@ public:
 	virtual void LoadConfiguration(const YAML::Node& node, IDTable& idmap);
 
 protected:
+	static void GetTimestampOfFile(std::string path, time_t& timestamp, int64_t& fs);
+
+	void LoadComplexCommon(
+		const std::string& path,
+		AnalogWaveform*& iwfm,
+		AnalogWaveform*& qwfm,
+		int64_t samplerate,
+		size_t numSamples);
+
 	void ArmTrigger();
 
 	//standard *IDN? fields
@@ -119,6 +191,8 @@ protected:
 	std::map<size_t, double> m_channelVoltageRange;
 	std::map<size_t, double> m_channelOffset;
 
+	void NormalizeTimebases();
+
 public:
 	static std::string GetDriverNameInternal();
 
@@ -127,4 +201,3 @@ public:
 };
 
 #endif
-

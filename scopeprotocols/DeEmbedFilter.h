@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -38,6 +38,10 @@
 #include "../scopehal/AlignedAllocator.h"
 #include <ffts.h>
 
+#ifdef HAVE_CLFFT
+#include <clFFT.h>
+#endif
+
 class DeEmbedFilter : public Filter
 {
 public:
@@ -66,8 +70,17 @@ protected:
 	virtual bool LoadSparameters();
 	virtual void InterpolateSparameters(float bin_hz, bool invert, size_t nouts);
 
+	enum SParameterNames
+	{
+		S11,
+		S12,
+		S21,
+		S22
+	};
+	std::string m_pathName;
 	std::string m_fname;
 
+	SParameterNames m_cachedPath;
 	std::vector<std::string> m_cachedFileNames;
 
 	float m_min;
@@ -78,21 +91,35 @@ protected:
 	double m_cachedBinSize;
 	std::vector<float, AlignedAllocator<float, 64> > m_resampledSparamSines;
 	std::vector<float, AlignedAllocator<float, 64> > m_resampledSparamCosines;
-	std::vector<float, AlignedAllocator<float, 64> > m_resampledSparamAmplitudes;
 
 	SParameters m_sparams;
 
 	ffts_plan_t* m_forwardPlan;
 	ffts_plan_t* m_reversePlan;
 	size_t m_cachedNumPoints;
-	size_t m_cachedRawSize;
 
-	float* m_forwardInBuf;
-	float* m_forwardOutBuf;
-	float* m_reverseOutBuf;
+	std::vector<float, AlignedAllocator<float, 64> > m_forwardInBuf;
+	std::vector<float, AlignedAllocator<float, 64> > m_forwardOutBuf;
+	std::vector<float, AlignedAllocator<float, 64> > m_reverseOutBuf;
 
 	void MainLoop(size_t nouts);
 	void MainLoopAVX2(size_t nouts);
+
+	#ifdef HAVE_CLFFT
+	clfftPlanHandle m_clfftForwardPlan;
+	clfftPlanHandle m_clfftReversePlan;
+
+	cl::Program* m_windowProgram;
+	cl::Kernel* m_rectangularWindowKernel;
+
+	cl::Program* m_deembedProgram;
+	cl::Kernel* m_deembedKernel;
+
+	cl::Buffer* m_sinbuf;
+	cl::Buffer* m_cosbuf;
+	cl::Buffer* m_windowbuf;
+	cl::Buffer* m_fftoutbuf;
+	#endif
 };
 
 #endif

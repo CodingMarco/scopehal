@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -53,7 +53,8 @@ public:
 		TYPE_ETHERTYPE,
 		TYPE_VLAN_TAG,
 		TYPE_PAYLOAD,
-		TYPE_FCS,
+		TYPE_FCS_GOOD,
+		TYPE_FCS_BAD,
 		TYPE_INBAND_STATUS,	//RGMII or similar
 		TYPE_NO_CARRIER
 	} m_type;

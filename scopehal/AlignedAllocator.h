@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -116,11 +116,11 @@ public:
 			throw std::length_error("AlignedAllocator<T>::allocate(): requested size is too large, integer overflow?");
 
 		//Do the actual allocation
-		#ifdef _WIN32
-			T* ret = static_cast<T*>(_aligned_malloc(n*sizeof(T), alignment));
-		#else
-			T* ret = static_cast<T*>(aligned_alloc(alignment, n*sizeof(T)));
-		#endif
+#ifdef _WIN32
+		T* ret = static_cast<T*>(_aligned_malloc(n*sizeof(T), alignment));
+#else
+		T* ret = static_cast<T*>(aligned_alloc(alignment, n*sizeof(T)));
+#endif
 
 		//Error check
 		if(ret == NULL)
@@ -131,11 +131,11 @@ public:
 
 	void deallocate(T* const p, const size_t /*unused*/) const
 	{
-		#ifdef _WIN32
-			_aligned_free(p);
-		#else
-			free(p);
-		#endif
+#ifdef _WIN32
+		_aligned_free(p);
+#else
+		free(p);
+#endif
 	}
 
 	//convenience wrapper

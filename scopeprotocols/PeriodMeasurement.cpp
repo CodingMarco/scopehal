@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -38,7 +38,7 @@ using namespace std;
 PeriodMeasurement::PeriodMeasurement(const string& color)
 	: Filter(OscilloscopeChannel::CHANNEL_TYPE_ANALOG, color, CAT_MEASUREMENT)
 {
-	m_yAxisUnit = Unit(Unit::UNIT_PS);
+	m_yAxisUnit = Unit(Unit::UNIT_FS);
 
 	//Set up channels
 	CreateInput("din");
@@ -116,7 +116,7 @@ void PeriodMeasurement::Refresh()
 	float midpoint = GetAvgVoltage(din);
 
 	//Timestamps of the edges
-	vector<double> edges;
+	vector<int64_t> edges;
 	FindZeroCrossings(din, midpoint, edges);
 	if(edges.size() < 2)
 	{
@@ -127,16 +127,16 @@ void PeriodMeasurement::Refresh()
 	//Create the output
 	auto cap = new AnalogWaveform;
 
-	double rmin = FLT_MAX;
-	double rmax = 0;
+	int64_t rmin = LONG_MAX;
+	int64_t rmax = 0;
 
 	for(size_t i=0; i < (edges.size()-2); i+= 2)
 	{
 		//measure from edge to 2 edges later, since we find all zero crossings regardless of polarity
-		double start = edges[i];
-		double end = edges[i+2];
+		int64_t start = edges[i];
+		int64_t end = edges[i+2];
 
-		double delta = end - start;
+		int64_t delta = end - start;
 		cap->m_offsets.push_back(start);
 		cap->m_durations.push_back(delta);
 		cap->m_samples.push_back(delta);
@@ -154,8 +154,8 @@ void PeriodMeasurement::Refresh()
 
 	SetData(cap, 0);
 
-	//Copy start time etc from the input. Timestamps are in picoseconds.
+	//Copy start time etc from the input. Timestamps are in femtoseconds.
 	cap->m_timescale = 1;
 	cap->m_startTimestamp = din->m_startTimestamp;
-	cap->m_startPicoseconds = din->m_startPicoseconds;
+	cap->m_startFemtoseconds = din->m_startFemtoseconds;
 }

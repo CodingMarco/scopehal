@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -121,9 +121,11 @@ void SCPIUARTTransport::SendRawData(size_t len, const unsigned char* buf)
 	m_uart.Write(buf, len);
 }
 
-void SCPIUARTTransport::ReadRawData(size_t len, unsigned char* buf)
+size_t SCPIUARTTransport::ReadRawData(size_t len, unsigned char* buf)
 {
-	m_uart.Read(buf, len);
+	if(!m_uart.Read(buf, len))
+		return 0;
+	return len;
 }
 
 bool SCPIUARTTransport::IsCommandBatchingSupported()

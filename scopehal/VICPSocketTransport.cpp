@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -202,7 +202,6 @@ string VICPSocketTransport::ReadReply(bool /*endOnSemicolon*/)	//ignore endOnSem
 
 	//make sure there's a null terminator
 	payload += "\0";
-
 	return payload;
 }
 
@@ -211,9 +210,11 @@ void VICPSocketTransport::SendRawData(size_t len, const unsigned char* buf)
 	m_socket.SendLooped(buf, len);
 }
 
-void VICPSocketTransport::ReadRawData(size_t len, unsigned char* buf)
+size_t VICPSocketTransport::ReadRawData(size_t len, unsigned char* buf)
 {
-	m_socket.RecvLooped(buf, len);
+	if(!m_socket.RecvLooped(buf, len))
+		return 0;
+	return len;
 }
 
 bool VICPSocketTransport::IsCommandBatchingSupported()

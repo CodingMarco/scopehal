@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -31,6 +31,13 @@
 
 using namespace std;
 
+#ifdef _WIN32
+string Unit::m_slocale;
+#else
+locale_t Unit::m_locale;
+locale_t Unit::m_defaultLocale;
+#endif
+
 /**
 	@brief Prints a value with SI scaling factors
 
@@ -39,6 +46,8 @@ using namespace std;
  */
 string Unit::PrettyPrint(double value, int sigfigs)
 {
+	SetPrintingLocale();
+
 	const char* scale = "";
 	const char* unit = "";
 
@@ -73,6 +82,11 @@ string Unit::PrettyPrint(double value, int sigfigs)
 	else if(fabs(value) < 1e-9)
 	{
 		value_rescaled *= 1e9;
+		scale = "n";
+	}
+	else if(fabs(value) < 1e-12)
+	{
+		value_rescaled *= 1e12;
 		scale = "p";
 	}
 
@@ -80,33 +94,38 @@ string Unit::PrettyPrint(double value, int sigfigs)
 	switch(m_type)
 	{
 		//Special handling needed since it's not a SI base unit
-		case UNIT_PS:
+		case UNIT_FS:
 			unit = "s";
 
-			if(fabs(value) >= 1e12)
+			if(fabs(value) >= 1e15)
+			{
+				value_rescaled = value / 1e15;
+				scale = "";
+			}
+			else if(fabs(value) >= 1e12)
 			{
 				value_rescaled = value / 1e12;
-				scale = "";
+				scale = "m";
 			}
 			else if(fabs(value) >= 1e9)
 			{
 				value_rescaled = value / 1e9;
-				scale = "m";
+				scale = "μ";
 			}
 			else if(fabs(value) >= 1e6)
 			{
 				value_rescaled = value / 1e6;
-				scale = "μ";
+				scale = "n";
 			}
 			else if(fabs(value) >= 1e3)
 			{
 				value_rescaled = value / 1e3;
-				scale = "n";
+				scale = "p";
 			}
 			else
 			{
 				value_rescaled = value;
-				scale = "p";
+				scale = "f";
 			}
 			break;
 
@@ -143,6 +162,10 @@ string Unit::PrettyPrint(double value, int sigfigs)
 
 		case UNIT_WATTS:
 			unit = "W";
+			break;
+
+		case UNIT_RHO:
+			unit = "ρ";
 			break;
 
 		case UNIT_BITRATE:
@@ -182,6 +205,10 @@ string Unit::PrettyPrint(double value, int sigfigs)
 			unit = "%";
 			scale = "";
 			value_rescaled = value * 100;
+			break;
+
+		case UNIT_COUNTS_SCI:
+			unit = "#";
 			break;
 
 		//Dimensionless unit, no scaling applied
@@ -253,6 +280,8 @@ string Unit::PrettyPrint(double value, int sigfigs)
 			}
 			break;
 	}
+
+	SetDefaultLocale();
 	return string(tmp);
 }
 
@@ -261,6 +290,8 @@ string Unit::PrettyPrint(double value, int sigfigs)
  */
 double Unit::ParseString(const string& str)
 {
+	SetPrintingLocale();
+
 	//Find the first non-numeric character in the strnig
 	double scale = 1;
 	for(size_t i=0; i<str.size(); i++)
@@ -283,6 +314,8 @@ double Unit::ParseString(const string& str)
 			scale = 1e-9;
 		else if(c == 'p')
 			scale = 1e-12;
+		else if(c == 'f')
+			scale = 1e-15;
 
 		break;
 	}
@@ -295,8 +328,8 @@ double Unit::ParseString(const string& str)
 	//Apply a unit-specific scaling factor
 	switch(m_type)
 	{
-		case Unit::UNIT_PS:
-			ret *= 1e12;
+		case Unit::UNIT_FS:
+			ret *= 1e15;
 			break;
 
 		case Unit::UNIT_PERCENT:
@@ -307,6 +340,7 @@ double Unit::ParseString(const string& str)
 			break;
 	}
 
+	SetDefaultLocale();
 	return ret;
 }
 
@@ -326,4 +360,39 @@ Unit Unit::operator*(const Unit& rhs)
 	//For now, just return the first unit.
 	//TODO: how should we handle this
 	return Unit(m_type);
+}
+
+void Unit::SetLocale(const char* locale)
+{
+#ifdef _WIN32
+	m_slocale = locale;
+#else
+	m_locale = newlocale(LC_ALL, locale, 0);
+
+	m_defaultLocale = newlocale(LC_ALL, "C", 0);
+#endif
+}
+
+/**
+	@brief Sets the current locale to the user's selected LC_NUMERIC for printing numbers for display
+ */
+void Unit::SetPrintingLocale()
+{
+	#ifdef _WIN32
+		setlocale(LC_NUMERIC, m_slocale.c_str());
+	#else
+		uselocale(m_locale);
+	#endif
+}
+
+/**
+	@brief Sets the current locale to "C" for interchange
+ */
+void Unit::SetDefaultLocale()
+{
+	#ifdef _WIN32
+		setlocale(LC_NUMERIC, "C");
+	#else
+		uselocale(m_defaultLocale);
+	#endif
 }

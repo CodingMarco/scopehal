@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -36,10 +36,13 @@
 #include "scopehal.h"
 #include "Filter.h"
 
-Filter::CreateMapType Filter::m_createprocs;
-std::set<Filter*> Filter::m_filters;
-
 using namespace std;
+
+Filter::CreateMapType Filter::m_createprocs;
+set<Filter*> Filter::m_filters;
+
+mutex Filter::m_cacheMutex;
+map<pair<WaveformBase*, float>, vector<int64_t> > Filter::m_zeroCrossingCache;
 
 Gdk::Color Filter::m_standardColors[STANDARD_COLOR_COUNT] =
 {
@@ -59,7 +62,9 @@ Gdk::Color Filter::m_standardColors[STANDARD_COLOR_COUNT] =
 Filter::Filter(
 	OscilloscopeChannel::ChannelType type,
 	const string& color,
-	Category cat)
+	Category cat,
+	const string& kernelPath,
+	const string& kernelName)
 	: OscilloscopeChannel(NULL, "", type, color, 1)	//TODO: handle this better?
 	, m_category(cat)
 	, m_dirty(true)
@@ -67,17 +72,60 @@ Filter::Filter(
 {
 	m_physical = false;
 	m_filters.emplace(this);
+
+	//Load our OpenCL kernel, if we have one
+	#ifdef HAVE_OPENCL
+
+		m_kernel = NULL;
+		m_program = NULL;
+
+		//Important to check g_clContext - OpenCL enabled at compile time does not guarantee that we have any
+		//usable OpenCL devices actually present on the system. We might also have disabled it via --noopencl.
+		if(kernelPath != "" && g_clContext)
+		{
+			try
+			{
+				string kernelSource = ReadDataFile(kernelPath);
+				cl::Program::Sources sources(1, make_pair(&kernelSource[0], kernelSource.length()));
+				m_program = new cl::Program(*g_clContext, sources);
+				m_program->build(g_contextDevices);
+				m_kernel = new cl::Kernel(*m_program, kernelName.c_str());
+			}
+			catch(const cl::Error& e)
+			{
+				LogError("OpenCL error: %s (%d)\n", e.what(), e.err() );
+
+				if(e.err() == CL_BUILD_PROGRAM_FAILURE)
+				{
+					LogError("Failed to build OpenCL program from %s\n", kernelPath.c_str());
+					string log;
+					m_program->getBuildInfo<string>(g_contextDevices[0], CL_PROGRAM_BUILD_LOG, &log);
+					LogDebug("Build log:\n");
+					LogDebug("%s\n", log.c_str());
+				}
+
+				delete m_program;
+				delete m_kernel;
+				m_program = NULL;
+				m_kernel = NULL;
+				return;
+			}
+
+		}
+
+	#endif
 }
 
 Filter::~Filter()
 {
-	m_filters.erase(this);
+	#ifdef HAVE_OPENCL
+		delete m_kernel;
+		delete m_program;
+		m_kernel = NULL;
+		m_program = NULL;
+	#endif
 
-	for(auto c : m_inputs)
-	{
-		if(c.m_channel != NULL)
-			c.m_channel->Release();
-	}
+	m_filters.erase(this);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -102,7 +150,22 @@ void Filter::Release()
 
 bool Filter::IsOverlay()
 {
+	//If we have no inputs, we can't be an overlay
+	if(GetInputCount() == 0)
+		return false;
+
+	//otherwise, assume we are one
 	return true;
+}
+
+/**
+	@brief Returns true if this filter outputs a waveform consisting of a single sample.
+
+	If scalar, the output is displayed with statistics rather than a waveform view.
+ */
+bool Filter::IsScalarOutput()
+{
+	return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -224,7 +287,7 @@ bool Filter::VerifyAllInputsOKAndAnalog()
 
 	The sampling rate of the data and clock signals need not be equal or uniform.
 
-	The sampled waveform has a time scale in picoseconds regardless of the incoming waveform's time scale.
+	The sampled waveform has a time scale in femtoseconds regardless of the incoming waveform's time scale.
 
 	@param data		The data signal to sample
 	@param clock	The clock signal to use
@@ -244,8 +307,8 @@ void Filter::SampleOnRisingEdges(DigitalWaveform* data, DigitalWaveform* clock, 
 			continue;
 
 		//Throw away data samples until the data is synced with us
-		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
+		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale + clock->m_triggerPhase;
+		while( (ndata+1 < dlen) && ((data->m_offsets[ndata+1] * data->m_timescale + data->m_triggerPhase) < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -270,7 +333,7 @@ void Filter::SampleOnRisingEdges(DigitalWaveform* data, DigitalWaveform* clock, 
 
 	The sampling rate of the data and clock signals need not be equal or uniform.
 
-	The sampled waveform has a time scale in picoseconds regardless of the incoming waveform's time scale.
+	The sampled waveform has a time scale in femtoseconds regardless of the incoming waveform's time scale.
 
 	@param data		The data signal to sample
 	@param clock	The clock signal to use
@@ -290,8 +353,8 @@ void Filter::SampleOnRisingEdges(DigitalBusWaveform* data, DigitalWaveform* cloc
 			continue;
 
 		//Throw away data samples until the data is synced with us
-		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
+		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale + clock->m_triggerPhase;
+		while( (ndata+1 < dlen) && ((data->m_offsets[ndata+1] * data->m_timescale + data->m_triggerPhase) < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -316,7 +379,7 @@ void Filter::SampleOnRisingEdges(DigitalBusWaveform* data, DigitalWaveform* cloc
 
 	The sampling rate of the data and clock signals need not be equal or uniform.
 
-	The sampled waveform has a time scale in picoseconds regardless of the incoming waveform's time scale.
+	The sampled waveform has a time scale in femtoseconds regardless of the incoming waveform's time scale.
 
 	@param data		The data signal to sample
 	@param clock	The clock signal to use
@@ -336,8 +399,8 @@ void Filter::SampleOnFallingEdges(DigitalWaveform* data, DigitalWaveform* clock,
 			continue;
 
 		//Throw away data samples until the data is synced with us
-		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
+		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale + clock->m_triggerPhase;
+		while( (ndata+1 < dlen) && ((data->m_offsets[ndata+1] * data->m_timescale + data->m_triggerPhase) < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -362,7 +425,7 @@ void Filter::SampleOnFallingEdges(DigitalWaveform* data, DigitalWaveform* clock,
 
 	The sampling rate of the data and clock signals need not be equal or uniform.
 
-	The sampled waveform has a time scale in picoseconds regardless of the incoming waveform's time scale.
+	The sampled waveform has a time scale in femtoseconds regardless of the incoming waveform's time scale.
 
 	@param data		The data signal to sample
 	@param clock	The clock signal to use
@@ -382,8 +445,8 @@ void Filter::SampleOnAnyEdges(DigitalWaveform* data, DigitalWaveform* clock, Dig
 			continue;
 
 		//Throw away data samples until the data is synced with us
-		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
+		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale + clock->m_triggerPhase;
+		while( (ndata+1 < dlen) && ((data->m_offsets[ndata+1] * data->m_timescale + data->m_triggerPhase) < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -408,7 +471,7 @@ void Filter::SampleOnAnyEdges(DigitalWaveform* data, DigitalWaveform* clock, Dig
 
 	The sampling rate of the data and clock signals need not be equal or uniform.
 
-	The sampled waveform has a time scale in picoseconds regardless of the incoming waveform's time scale.
+	The sampled waveform has a time scale in femtoseconds regardless of the incoming waveform's time scale.
 
 	@param data		The data signal to sample
 	@param clock	The clock signal to use
@@ -428,8 +491,8 @@ void Filter::SampleOnAnyEdges(DigitalBusWaveform* data, DigitalWaveform* clock, 
 			continue;
 
 		//Throw away data samples until the data is synced with us
-		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale;
-		while( (ndata+1 < dlen) && (data->m_offsets[ndata+1] * data->m_timescale < clkstart) )
+		int64_t clkstart = clock->m_offsets[i] * clock->m_timescale + clock->m_triggerPhase;
+		while( (ndata+1 < dlen) && ((data->m_offsets[ndata+1] * data->m_timescale + data->m_triggerPhase) < clkstart) )
 			ndata ++;
 		if(ndata >= dlen)
 			break;
@@ -450,69 +513,153 @@ void Filter::SampleOnAnyEdges(DigitalBusWaveform* data, DigitalWaveform* clock, 
 }
 
 /**
-	@brief Find zero crossings in a waveform, interpolating as necessary
+	@brief Find rising edges in a waveform, interpolating as necessary
  */
-void Filter::FindZeroCrossings(AnalogWaveform* data, float threshold, std::vector<int64_t>& edges)
+void Filter::FindRisingEdges(AnalogWaveform* data, float threshold, vector<int64_t>& edges)
 {
 	//Find times of the zero crossings
 	bool first = true;
 	bool last = false;
-	int64_t phoff = data->m_timescale/2 + data->m_triggerPhase;
+	int64_t phoff = data->m_triggerPhase;
 	size_t len = data->m_samples.size();
-	for(size_t i=1; i<len; i++)
+	float fscale = data->m_timescale;
+
+	if(data->m_densePacked)
 	{
-		bool value = data->m_samples[i] > threshold;
-
-		//Save the last value
-		if(first)
+		for(size_t i=1; i<len; i++)
 		{
-			last = value;
-			first = false;
-			continue;
+			bool value = data->m_samples[i] > threshold;
+
+			//Save the last value
+			if(first)
+			{
+				last = value;
+				first = false;
+				continue;
+			}
+			if(!value)
+				last = false;
+
+			//Skip samples with no rising edge
+			if(!value || last)
+				continue;
+
+			//Midpoint of the sample, plus the zero crossing
+			int64_t tfrac = fscale * InterpolateTime(data, i-1, threshold);
+			int64_t t = phoff + data->m_timescale*(i-1) + tfrac;
+			edges.push_back(t);
+			last = true;
 		}
+	}
+	else
+	{
+		for(size_t i=1; i<len; i++)
+		{
+			bool value = data->m_samples[i] > threshold;
 
-		//Skip samples with no transition
-		if(last == value)
-			continue;
+			//Save the last value
+			if(first)
+			{
+				last = value;
+				first = false;
+				continue;
+			}
 
-		//Midpoint of the sample, plus the zero crossing
-		int64_t t = phoff + data->m_timescale * (data->m_offsets[i] + InterpolateTime(data, i-1, threshold));
-		edges.push_back(t);
-		last = value;
+			if(!value)
+				last = false;
+
+			//Skip samples with no rising edge
+			if(!value || last)
+				continue;
+
+			//Midpoint of the sample, plus the zero crossing
+			int64_t tfrac = fscale * InterpolateTime(data, i-1, threshold);
+			int64_t t = phoff + data->m_timescale * data->m_offsets[i-1] + tfrac;
+			edges.push_back(t);
+			last = true;
+		}
 	}
 }
 
 /**
 	@brief Find zero crossings in a waveform, interpolating as necessary
  */
-void Filter::FindZeroCrossings(AnalogWaveform* data, float threshold, std::vector<double>& edges)
+void Filter::FindZeroCrossings(AnalogWaveform* data, float threshold, vector<int64_t>& edges)
 {
+	pair<WaveformBase*, float> cachekey(data, threshold);
+
+	//Check cache
+	{
+		lock_guard<mutex> lock(m_cacheMutex);
+		auto it = m_zeroCrossingCache.find(cachekey);
+		if(it != m_zeroCrossingCache.end())
+		{
+			edges = it->second;
+			return;
+		}
+	}
+
 	//Find times of the zero crossings
 	bool first = true;
 	bool last = false;
-	double phoff = data->m_timescale/2 + data->m_triggerPhase;
+	int64_t phoff = data->m_triggerPhase;
 	size_t len = data->m_samples.size();
-	for(size_t i=1; i<len; i++)
+	float fscale = data->m_timescale;
+
+	if(data->m_densePacked)
 	{
-		bool value = data->m_samples[i] > threshold;
-
-		//Save the last value
-		if(first)
+		for(size_t i=1; i<len; i++)
 		{
+			bool value = data->m_samples[i] > threshold;
+
+			//Save the last value
+			if(first)
+			{
+				last = value;
+				first = false;
+				continue;
+			}
+
+			//Skip samples with no transition
+			if(last == value)
+				continue;
+
+			//Midpoint of the sample, plus the zero crossing
+			int64_t tfrac = fscale * InterpolateTime(data, i-1, threshold);
+			int64_t t = phoff + data->m_timescale*(i-1) + tfrac;
+			edges.push_back(t);
 			last = value;
-			first = false;
-			continue;
 		}
-
-		//Skip samples with no transition
-		if(last == value)
-			continue;
-
-		//Midpoint of the sample, plus the zero crossing
-		double t = phoff + data->m_timescale * (data->m_offsets[i] + InterpolateTime(data, i-1, threshold));
-		edges.push_back(t);
-		last = value;
 	}
+	else
+	{
+		for(size_t i=1; i<len; i++)
+		{
+			bool value = data->m_samples[i] > threshold;
+
+			//Save the last value
+			if(first)
+			{
+				last = value;
+				first = false;
+				continue;
+			}
+
+			//Skip samples with no transition
+			if(last == value)
+				continue;
+
+			//Midpoint of the sample, plus the zero crossing
+			int64_t tfrac = fscale * InterpolateTime(data, i-1, threshold);
+			int64_t t = phoff + data->m_timescale * data->m_offsets[i-1] + tfrac;
+			edges.push_back(t);
+			last = value;
+		}
+	}
+
+	//Add to cache
+	lock_guard<mutex> lock(m_cacheMutex);
+	m_zeroCrossingCache[cachekey] = edges;
 }
 
 /**
@@ -606,65 +753,21 @@ void Filter::FindFallingEdges(DigitalWaveform* data, vector<int64_t>& edges)
 	}
 }
 
-/**
-	@brief Find edges in a waveform, discarding repeated samples
-
-	No extra resolution vs the int64 version, just for interface compatibility with the analog interpolating version.
- */
-void Filter::FindZeroCrossings(DigitalWaveform* data, vector<double>& edges)
-{
-	vector<int64_t> tmp;
-	FindZeroCrossings(data, tmp);
-	for(auto e : tmp)
-		edges.push_back(e);
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Serialization
 
-void Filter::LoadParameters(const YAML::Node& node, IDTable& /*table*/)
+string Filter::SerializeConfiguration(IDTable& table, size_t /*indent*/)
 {
-	//id, protocol, color are already loaded
-	m_displayname = node["nick"].as<string>();
-	m_hwname = node["name"].as<string>();
+	string base = FlowGraphNode::SerializeConfiguration(table, 8);
 
-	auto parameters = node["parameters"];
-	for(auto it : parameters)
-		GetParameter(it.first.as<string>()).ParseString(it.second.as<string>());
-}
-
-void Filter::LoadInputs(const YAML::Node& node, IDTable& table)
-{
-	int index;
-	int stream;
-
-	auto inputs = node["inputs"];
-	for(auto it : inputs)
-	{
-		//Inputs are formatted as %d/%d. Stream index may be omitted.
-		auto sin = it.second.as<string>();
-		if(2 != sscanf(sin.c_str(), "%d/%d", &index, &stream))
-		{
-			index = atoi(sin.c_str());
-			stream = 0;
-		}
-
-		SetInput(
-			it.first.as<string>(),
-			StreamDescriptor(static_cast<OscilloscopeChannel*>(table[index]), stream),
-			true
-			);
-	}
-}
-
-string Filter::SerializeConfiguration(IDTable& table)
-{
-	//Save basic decode info
+	int id = table.emplace(this);
+	string config;
 	char tmp[1024];
-	snprintf(tmp, sizeof(tmp), "    : \n");
-	string config = tmp;
-	snprintf(tmp, sizeof(tmp), "        id:              %d\n", table.emplace(this));
+	snprintf(tmp, sizeof(tmp), "    filter%d:\n", id);
 	config += tmp;
+	snprintf(tmp, sizeof(tmp), "        id:              %d\n", id);
+	config += tmp;
+	config += base;
 
 	//Channel info
 	snprintf(tmp, sizeof(tmp), "        protocol:        \"%s\"\n", GetProtocolDisplayName().c_str());
@@ -676,55 +779,27 @@ string Filter::SerializeConfiguration(IDTable& table)
 	snprintf(tmp, sizeof(tmp), "        name:            \"%s\"\n", GetHwname().c_str());
 	config += tmp;
 
-	//Inputs
-	snprintf(tmp, sizeof(tmp), "        inputs: \n");
+	//Save gain and offset (not applicable to all filters, but save it just in case)
+	snprintf(tmp, sizeof(tmp), "        vrange:          %f\n", GetVoltageRange());
 	config += tmp;
-	for(size_t i=0; i<m_inputs.size(); i++)
-	{
-		auto desc = m_inputs[i];
-		if(desc.m_channel == NULL)
-			snprintf(tmp, sizeof(tmp), "            %-20s 0\n", (m_signalNames[i] + ":").c_str());
-		else
-		{
-			snprintf(tmp, sizeof(tmp), "            %-20s %d/%zu\n",
-				(m_signalNames[i] + ":").c_str(),
-				table.emplace(desc.m_channel),
-				desc.m_stream
-			);
-		}
-		config += tmp;
-	}
-
-	//Parameters
-	snprintf(tmp, sizeof(tmp), "        parameters: \n");
+	snprintf(tmp, sizeof(tmp), "        offset:          %f\n", GetOffset());
 	config += tmp;
-	for(auto it : m_parameters)
-	{
-		switch(it.second.GetType())
-		{
-			case FilterParameter::TYPE_FLOAT:
-			case FilterParameter::TYPE_INT:
-			case FilterParameter::TYPE_BOOL:
-				snprintf(
-					tmp,
-					sizeof(tmp),
-					"            %-20s %s\n", (it.first+":").c_str(), it.second.ToString().c_str());
-				break;
-
-			case FilterParameter::TYPE_FILENAME:
-			case FilterParameter::TYPE_FILENAMES:
-			default:
-				snprintf(
-					tmp,
-					sizeof(tmp),
-					"            %-20s \"%s\"\n", (it.first+":").c_str(), it.second.ToString().c_str());
-				break;
-		}
-
-		config += tmp;
-	}
 
 	return config;
+}
+
+void Filter::LoadParameters(const YAML::Node& node, IDTable& table)
+{
+	FlowGraphNode::LoadParameters(node, table);
+
+	//id, protocol, color are already loaded
+	m_displayname = node["nick"].as<string>();
+	m_hwname = node["name"].as<string>();
+
+	if(node["vrange"])
+		SetVoltageRange(node["vrange"].as<double>());
+	if(node["offset"])
+		SetOffset(node["offset"].as<double>());
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -889,16 +964,18 @@ vector<size_t> Filter::MakeHistogram(AnalogWaveform* cap, float low, float high,
 	for(size_t i=0; i<bins; i++)
 		ret.push_back(0);
 
+	//Early out if we have zero span
+	if(bins == 0)
+		return ret;
+
 	float delta = high-low;
 
 	for(float v : cap->m_samples)
 	{
 		float fbin = (v-low) / delta;
 		size_t bin = floor(fbin * bins);
-		if(fbin < 0)
-			bin = 0;
-		if(bin >= bins)
-			bin = bin-1;
+		bin = max(bin, (size_t)0);
+		bin = min(bin, bins-1);
 		ret[bin] ++;
 	}
 
@@ -957,4 +1034,238 @@ float Filter::GetTopVoltage(AnalogWaveform* cap)
 
 	float fbin = (idx + 0.5f)/nbins;
 	return fbin*delta + vmin;
+}
+
+void Filter::ClearAnalysisCache()
+{
+	lock_guard<mutex> lock(m_cacheMutex);
+	m_zeroCrossingCache.clear();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Helpers for various common boilerplate operations
+
+/**
+	@brief Sets up an analog output waveform and copies basic metadata from the input.
+
+	A new output waveform is created if necessary, but when possible the existing one is reused.
+
+	@param din			Input waveform
+	@param stream		Stream index
+	@param clear		True to clear an existing waveform, false to leave it as-is
+
+	@return	The ready-to-use output waveform
+ */
+AnalogWaveform* Filter::SetupEmptyOutputWaveform(WaveformBase* din, size_t stream, bool clear)
+{
+	//Create the waveform, but only if necessary
+	AnalogWaveform* cap = dynamic_cast<AnalogWaveform*>(GetData(stream));
+	if(cap == NULL)
+	{
+		cap = new AnalogWaveform;
+		SetData(cap, stream);
+	}
+
+	//Copy configuration
+	cap->m_startTimestamp 		= din->m_startTimestamp;
+	cap->m_startFemtoseconds	= din->m_startFemtoseconds;
+
+	//Clear output
+	if(clear)
+	{
+		cap->m_samples.clear();
+		cap->m_offsets.clear();
+		cap->m_durations.clear();
+	}
+
+	return cap;
+}
+
+/**
+	@brief Sets up an digital output waveform and copies basic metadata from the input.
+
+	A new output waveform is created if necessary, but when possible the existing one is reused.
+
+	@param din			Input waveform
+	@param stream		Stream index
+
+	@return	The ready-to-use output waveform
+ */
+DigitalWaveform* Filter::SetupEmptyDigitalOutputWaveform(WaveformBase* din, size_t stream)
+{
+	//Create the waveform, but only if necessary
+	DigitalWaveform* cap = dynamic_cast<DigitalWaveform*>(GetData(stream));
+	if(cap == NULL)
+	{
+		cap = new DigitalWaveform;
+		SetData(cap, stream);
+	}
+
+	//Copy configuration
+	cap->m_startTimestamp 		= din->m_startTimestamp;
+	cap->m_startFemtoseconds	= din->m_startFemtoseconds;
+
+	//Clear output
+	cap->m_samples.clear();
+	cap->m_offsets.clear();
+	cap->m_durations.clear();
+
+	return cap;
+}
+
+/**
+	@brief Sets up an analog output waveform and copies timebase configuration from the input.
+
+	A new output waveform is created if necessary, but when possible the existing one is reused.
+	Timestamps are copied from the input to the output.
+
+	@param din			Input waveform
+	@param stream		Stream index
+	@param skipstart	Number of input samples to discard from the beginning of the waveform
+	@param skipend		Number of input samples to discard from the end of the waveform
+
+	@return	The ready-to-use output waveform
+ */
+AnalogWaveform* Filter::SetupOutputWaveform(WaveformBase* din, size_t stream, size_t skipstart, size_t skipend)
+{
+	auto cap = SetupEmptyOutputWaveform(din, stream, false);
+
+	cap->m_timescale 			= din->m_timescale;
+	cap->m_triggerPhase			= din->m_triggerPhase;
+
+	size_t len = din->m_offsets.size() - (skipstart + skipend);
+	size_t curlen = cap->m_offsets.size();
+
+	cap->Resize(len);
+
+	//If the input waveform is NOT dense packed, no optimizations possible.
+	if(!din->m_densePacked)
+	{
+		memcpy(&cap->m_offsets[0], &din->m_offsets[skipstart], len*sizeof(int64_t));
+		memcpy(&cap->m_durations[0], &din->m_durations[skipstart], len*sizeof(int64_t));
+		cap->m_densePacked = false;
+	}
+
+	//Input waveform is dense packed, but output is not.
+	//Need to clear some old stuff but we can produce a dense packed output.
+	//Note that we copy from zero regardless of skipstart to produce a dense packed output.
+	//TODO: AVX2 optimizations here so we don't need to read data we already know the value of
+	else if(!cap->m_densePacked)
+	{
+		memcpy(&cap->m_offsets[0], &din->m_offsets[0], len*sizeof(int64_t));
+		memcpy(&cap->m_durations[0], &din->m_durations[0], len*sizeof(int64_t));
+		cap->m_densePacked = true;
+	}
+
+	//Both waveforms are dense packed, but new size is bigger. Need to copy the additional data.
+	else if(len > curlen)
+	{
+		size_t increase = len - curlen;
+		memcpy(&cap->m_offsets[curlen], &din->m_offsets[curlen], increase*sizeof(int64_t));
+		memcpy(&cap->m_durations[curlen], &din->m_durations[curlen], increase*sizeof(int64_t));
+	}
+
+	//Both waveforms are dense packed, new size is smaller or the same.
+	//This is what we want: no work needed at all!
+	else
+	{
+	}
+
+	return cap;
+}
+
+/**
+	@brief Sets up a digital output waveform and copies timebase configuration from the input.
+
+	A new output waveform is created if necessary, but when possible the existing one is reused.
+	Timestamps are copied from the input to the output.
+
+	@param din			Input waveform
+	@param stream		Stream index
+	@param skipstart	Number of input samples to discard from the beginning of the waveform
+	@param skipend		Number of input samples to discard from the end of the waveform
+
+	@return	The ready-to-use output waveform
+ */
+DigitalWaveform* Filter::SetupDigitalOutputWaveform(WaveformBase* din, size_t stream, size_t skipstart, size_t skipend)
+{
+	//Create the waveform, but only if necessary
+	DigitalWaveform* cap = dynamic_cast<DigitalWaveform*>(GetData(stream));
+	if(cap == NULL)
+	{
+		cap = new DigitalWaveform;
+		SetData(cap, stream);
+	}
+
+	//Copy configuration
+	cap->m_timescale 			= din->m_timescale;
+	cap->m_startTimestamp 		= din->m_startTimestamp;
+	cap->m_startFemtoseconds	= din->m_startFemtoseconds;
+	cap->m_triggerPhase			= din->m_triggerPhase;
+
+	size_t len = din->m_offsets.size() - (skipstart + skipend);
+	size_t curlen = cap->m_offsets.size();
+
+	cap->Resize(len);
+
+	//If the input waveform is NOT dense packed, no optimizations possible.
+	if(!din->m_densePacked)
+	{
+		memcpy(&cap->m_offsets[0], &din->m_offsets[skipstart], len*sizeof(int64_t));
+		memcpy(&cap->m_durations[0], &din->m_durations[skipstart], len*sizeof(int64_t));
+		cap->m_densePacked = false;
+	}
+
+	//Input waveform is dense packed, but output is not.
+	//Need to clear some old stuff but we can produce a dense packed output.
+	//Note that we copy from zero regardless of skipstart to produce a dense packed output.
+	//TODO: AVX2 optimizations here so we don't need to read data we already know the value of
+	else if(!cap->m_densePacked)
+	{
+		memcpy(&cap->m_offsets[0], &din->m_offsets[0], len*sizeof(int64_t));
+		memcpy(&cap->m_durations[0], &din->m_durations[0], len*sizeof(int64_t));
+		cap->m_densePacked = true;
+	}
+
+	//Both waveforms are dense packed, but new size is bigger. Need to copy the additional data.
+	else if(len > curlen)
+	{
+		size_t increase = len - curlen;
+		memcpy(&cap->m_offsets[curlen], &din->m_offsets[curlen], increase*sizeof(int64_t));
+		memcpy(&cap->m_durations[curlen], &din->m_durations[curlen], increase*sizeof(int64_t));
+	}
+
+	//Both waveforms are dense packed, new size is smaller or the same.
+	//This is what we want: no work needed at all!
+	else
+	{
+	}
+
+	return cap;
+}
+
+/**
+	@brief Calculates a CRC32 checksum using the standard Ethernet polynomial
+ */
+uint32_t Filter::CRC32(vector<uint8_t>& bytes, size_t start, size_t end)
+{
+	uint32_t poly = 0xedb88320;
+
+	uint32_t crc = 0xffffffff;
+	for(size_t n=start; n <= end; n++)
+	{
+		uint8_t d = bytes[n];
+		for(int i=0; i<8; i++)
+		{
+			bool b = ( crc ^ (d >> i) ) & 1;
+			crc >>= 1;
+			if(b)
+				crc ^= poly;
+		}
+	}
+
+	return ~(	((crc & 0x000000ff) << 24) |
+				((crc & 0x0000ff00) << 8) |
+				((crc & 0x00ff0000) >> 8) |
+				 (crc >> 24) );
 }

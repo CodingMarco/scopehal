@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -42,10 +42,10 @@ public:
 	Packet();
 	virtual ~Packet();
 
-	///Offset of the packet from the start of the capture (picoseconds)
+	///Offset of the packet from the start of the capture (femtoseconds)
 	int64_t m_offset;
 
-	///Duration time of the packet (picoseconds)
+	///Duration time of the packet (femtoseconds)
 	int64_t m_len;
 
 	//Arbitrary header properties (human readable)

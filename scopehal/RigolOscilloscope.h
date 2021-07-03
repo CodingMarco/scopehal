@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -39,8 +39,8 @@ public:
 	virtual ~RigolOscilloscope();
 
 	//not copyable or assignable
-	RigolOscilloscope(const RigolOscilloscope& rhs) =delete;
-	RigolOscilloscope& operator=(const RigolOscilloscope& rhs) =delete;
+	RigolOscilloscope(const RigolOscilloscope& rhs) = delete;
+	RigolOscilloscope& operator=(const RigolOscilloscope& rhs) = delete;
 
 public:
 	//Device information
@@ -54,8 +54,10 @@ public:
 	virtual void DisableChannel(size_t i);
 	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i);
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type);
+	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings(size_t i);
 	virtual double GetChannelAttenuation(size_t i);
 	virtual void SetChannelAttenuation(size_t i, double atten);
+	virtual std::vector<unsigned int> GetChannelBandwidthLimiters(size_t i);
 	virtual int GetChannelBandwidthLimit(size_t i);
 	virtual void SetChannelBandwidthLimit(size_t i, unsigned int limit_mhz);
 	virtual double GetChannelVoltageRange(size_t i);
@@ -70,6 +72,7 @@ public:
 	virtual void Start();
 	virtual void StartSingleTrigger();
 	virtual void Stop();
+	virtual void ForceTrigger();
 	virtual bool IsTriggerArmed();
 	virtual void PushTrigger();
 	virtual void PullTrigger();

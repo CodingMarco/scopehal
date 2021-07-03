@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -137,13 +137,11 @@ void CTLEFilter::InterpolateSparameters(float bin_hz, bool /*invert*/, size_t no
 		fcpx s(0, FreqToPhase(bin_hz * i));
 		fcpx h = prescale * (s - zero) / ( (s-p0) * (s-p1) );
 
-		m_resampledSparamAmplitudes.push_back(abs(h));
-
 		//Phase correction seems unnecessary because this transfer function should be constant rotation?
 		//We get weird results when we do this, too.
 		float phase = 0;//arg(h);
-		m_resampledSparamSines.push_back(sin(phase));
-		m_resampledSparamCosines.push_back(cos(phase));
+		m_resampledSparamSines.push_back(sin(phase) * abs(h));
+		m_resampledSparamCosines.push_back(cos(phase) * abs(h));
 	}
 }
 

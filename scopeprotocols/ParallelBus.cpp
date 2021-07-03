@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -148,7 +148,7 @@ void ParallelBus::Refresh()
 	//Copy our time scales from the input
 	cap->m_timescale = inputs[0]->m_timescale;
 	cap->m_startTimestamp = inputs[0]->m_startTimestamp;
-	cap->m_startPicoseconds = inputs[0]->m_startPicoseconds;
+	cap->m_startFemtoseconds = inputs[0]->m_startFemtoseconds;
 
 	//Set all unused channels to NULL
 	for(size_t i=m_width; i < 16; i++)

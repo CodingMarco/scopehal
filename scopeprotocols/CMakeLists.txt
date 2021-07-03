@@ -1,4 +1,4 @@
-include_directories(${GTKMM_INCLUDE_DIRS} ${SIGCXX_INCLUDE_DIRS})
+include_directories(SYSTEM ${GTKMM_INCLUDE_DIRS} ${SIGCXX_INCLUDE_DIRS})
 link_directories(${GTKMM_LIBRARY_DIRS} ${SIGCXX_LIBRARY_DIRS})
 
 set(SCOPEPROTOCOLS_SOURCES
@@ -11,21 +11,30 @@ set(SCOPEPROTOCOLS_SOURCES
 	ClockRecoveryFilter.cpp
 	CTLEFilter.cpp
 	CurrentShuntFilter.cpp
+	DCDMeasurement.cpp
 	DCOffsetFilter.cpp
+	DDJMeasurement.cpp
+	DDR1Decoder.cpp
 	DDR3Decoder.cpp
 	DeEmbedFilter.cpp
 	DeskewFilter.cpp
+	DigitalToPAM4Filter.cpp
+	DigitalToNRZFilter.cpp
 	DownconvertFilter.cpp
 	DownsampleFilter.cpp
 	DPhyDataDecoder.cpp
 	DPhyHSClockRecoveryFilter.cpp
 	DPhySymbolDecoder.cpp
+	DramClockFilter.cpp
 	DramRefreshActivateMeasurement.cpp
 	DramRowColumnLatencyMeasurement.cpp
 	DSIFrameDecoder.cpp
 	DSIPacketDecoder.cpp
 	DutyCycleMeasurement.cpp
 	DVIDecoder.cpp
+	EmphasisFilter.cpp
+	EmphasisRemovalFilter.cpp
+	ESPIDecoder.cpp
 	Ethernet10BaseTDecoder.cpp
 	Ethernet100BaseTDecoder.cpp
 	Ethernet1000BaseXDecoder.cpp
@@ -44,37 +53,57 @@ set(SCOPEPROTOCOLS_SOURCES
 	EyeWidthMeasurement.cpp
 	FallMeasurement.cpp
 	FFTFilter.cpp
+	FIRFilter.cpp
 	FrequencyMeasurement.cpp
+	HistogramFilter.cpp
 	HorizontalBathtub.cpp
 	I2CDecoder.cpp
 	I2CEepromDecoder.cpp
 	IBM8b10bDecoder.cpp
 	IPv4Decoder.cpp
+	ISIMeasurement.cpp
+	JitterFilter.cpp
+	JitterSpectrumFilter.cpp
 	JtagDecoder.cpp
 	MagnitudeFilter.cpp
 	MDIODecoder.cpp
+	MilStd1553Decoder.cpp
 	MovingAverageFilter.cpp
 	MultiplyFilter.cpp
+	NoiseFilter.cpp
 	OFDMDemodulator.cpp
 	OneWireDecoder.cpp
 	OvershootMeasurement.cpp
 	ParallelBus.cpp
+	PCIeDataLinkDecoder.cpp
+	PCIeGen2LogicalDecoder.cpp
+	PCIeTransportDecoder.cpp
 	PeakHoldFilter.cpp
 	PeriodMeasurement.cpp
+	PhaseMeasurement.cpp
 	PkPkMeasurement.cpp
+	PRBSGeneratorFilter.cpp
+	RjBUjFilter.cpp
 	QuadratureDecoder.cpp
 	QSPIDecoder.cpp
 	RiseMeasurement.cpp
 	SDCmdDecoder.cpp
 	SDDataDecoder.cpp
+	SDRAMDecoderBase.cpp
+	SpectrogramFilter.cpp
 	SPIDecoder.cpp
 	SPIFlashDecoder.cpp
+	StepGeneratorFilter.cpp
 	SubtractFilter.cpp
 	SWDDecoder.cpp
 	SWDMemAPDecoder.cpp
 	TachometerFilter.cpp
+	TappedDelayLineFilter.cpp
+	TDRFilter.cpp
+	TDRStepDeEmbedFilter.cpp
 	ThresholdFilter.cpp
 	TIEMeasurement.cpp
+	ToneGeneratorFilter.cpp
 	TMDSDecoder.cpp
 	TopMeasurement.cpp
 	UARTDecoder.cpp
@@ -85,6 +114,8 @@ set(SCOPEPROTOCOLS_SOURCES
 	USB2PacketDecoder.cpp
 	USB2PCSDecoder.cpp
 	USB2PMADecoder.cpp
+	VerticalBathtub.cpp
+	WaveformGenerationFilter.cpp
 	Waterfall.cpp
 	WindowedAutocorrelationFilter.cpp
 
@@ -106,4 +137,4 @@ target_include_directories(scopeprotocols
 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
        ${LIBFFTS_INCLUDE_DIR})
 
-install(TARGETS scopeprotocols LIBRARY DESTINATION /usr/lib)
+install(TARGETS scopeprotocols LIBRARY)

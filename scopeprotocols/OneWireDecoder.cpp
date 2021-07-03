@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -104,7 +104,7 @@ void OneWireDecoder::Refresh()
 	auto cap = new OneWireWaveform;
 	cap->m_timescale = din->m_timescale;
 	cap->m_startTimestamp = din->m_startTimestamp;
-	cap->m_startPicoseconds = din->m_startPicoseconds;
+	cap->m_startFemtoseconds = din->m_startFemtoseconds;
 	SetData(cap, 0);
 
 	//Get timestamps and durations of all low-going pulses
@@ -148,7 +148,7 @@ void OneWireDecoder::Refresh()
 	for(size_t i=0; i<len; i++)
 	{
 		//Get the length of this pulse in us
-		float pulselen = lens[i] * 1e-6;
+		float pulselen = lens[i] * din->m_timescale * 1e-9;
 
 		int64_t tend = starts[i] + lens[i];
 
@@ -156,7 +156,7 @@ void OneWireDecoder::Refresh()
 		float delta = starts[i];
 		if(i >= 1)
 			delta -= (starts[i-1] + lens[i-1]);
-		delta *= 1e-6;
+		delta *= 1e-9;
 
 		switch(state)
 		{

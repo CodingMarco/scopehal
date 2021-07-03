@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -50,7 +50,7 @@ bool USB2PCSDecoder::ValidateChannel(size_t i, StreamDescriptor stream)
 	if(stream.m_channel == NULL)
 		return false;
 
-	if( (i == 0) && (dynamic_cast<USB2PMAWaveform*>(stream.m_channel->GetData(0)) != NULL) )
+	if( (i == 0) && (dynamic_cast<USB2PMADecoder*>(stream.m_channel) != NULL) )
 		return true;
 
 	return false;
@@ -107,7 +107,7 @@ void USB2PCSDecoder::Refresh()
 	auto cap = new USB2PCSWaveform;
 	cap->m_timescale = din->m_timescale;
 	cap->m_startTimestamp = din->m_startTimestamp;
-	cap->m_startPicoseconds = din->m_startPicoseconds;
+	cap->m_startFemtoseconds = din->m_startFemtoseconds;
 
 	//Initialize the current sample to idle at the start of the capture
 	int64_t offset = 0;
@@ -119,6 +119,7 @@ void USB2PCSDecoder::Refresh()
 	//Decode stuff
 	size_t count = 0;
 	uint8_t data = 0;
+	bool first = true;
 	for(size_t i=0; i<len; i++)
 	{
 		switch(state)
@@ -128,7 +129,7 @@ void USB2PCSDecoder::Refresh()
 				break;
 
 			case STATE_SYNC:
-				RefreshIterationSync(i, state, ui_width, cap, din, count, offset, data);
+				RefreshIterationSync(i, state, speed, ui_width, cap, din, count, offset, data, first);
 				break;
 
 			case STATE_DATA:
@@ -136,6 +137,7 @@ void USB2PCSDecoder::Refresh()
 					i,
 					i-1,
 					state,
+					speed,
 					ui_width,
 					cap,
 					din,
@@ -161,11 +163,11 @@ void USB2PCSDecoder::RefreshIterationIdle(
 	int64_t& offset
 	)
 {
-	const size_t ui_width_480 = 2083;
-	const size_t ui_width_12 = 83333;
-	const size_t ui_width_1 = 666666;
+	const size_t ui_width_480 = 2083000;
+	const size_t ui_width_12 = 83333000;
+	const size_t ui_width_1 = 666666000;
 
-	size_t sample_ps = din->m_durations[nin] * din->m_timescale;
+	size_t sample_fs = din->m_durations[nin] * din->m_timescale;
 	auto sin = din->m_samples[nin];
 
 	switch(sin.m_type)
@@ -181,12 +183,12 @@ void USB2PCSDecoder::RefreshIterationIdle(
 			offset = din->m_offsets[nin];
 
 			//The length of the K indicates our clock speed
-			if(sample_ps < (2 * ui_width_480) )
+			if(sample_fs < (2 * ui_width_480) )
 			{
 				speed = SPEED_480M;
 				ui_width = ui_width_480;
 			}
-			else if(sample_ps < (2 * ui_width_12) )
+			else if(sample_fs < (2 * ui_width_12) )
 			{
 				speed = SPEED_12M;
 				ui_width = ui_width_12;
@@ -219,36 +221,64 @@ void USB2PCSDecoder::RefreshIterationIdle(
 void USB2PCSDecoder::RefreshIterationSync(
 	size_t nin,
 	DecodeState& state,
+	BusSpeed speed,
 	size_t& ui_width,
 	USB2PCSWaveform* cap,
 	USB2PMAWaveform* din,
 	size_t& count,
 	int64_t& offset,
-	uint8_t& data)
+	uint8_t& data,
+	bool& first)
 {
-	size_t sample_ps = din->m_durations[nin] * din->m_timescale;
-	float sample_width_ui = sample_ps * 1.0f / ui_width;
+	size_t sample_fs = din->m_durations[nin] * din->m_timescale;
+	float sample_width_ui = sample_fs * 1.0f / ui_width;
 
 	//Keep track of our position in the sync sequence
 	count ++;
 	auto sin = din->m_samples[nin];
 
+
+	bool sync_odd, sync_even;
+
+	if (speed == SPEED_480M)
+	{
+		// TODO: rather than hard-coding the count, detect 2 K symbols for end of sync
+		sync_odd = (count & 1) && count < 30;
+		sync_even = !(count & 1) && count < 30;
+	}
+	else
+	{
+		sync_odd = (count == 1) || (count == 3) || (count == 5);
+		sync_even = (count == 2) || (count == 4);
+	}
+
 	//Odd numbered position
-	if( (count == 1) || (count == 3) || (count == 5) )
+	if(sync_odd)
 	{
 		//Should be one UI long, and a J. Complain if not.
 		if( (sample_width_ui > 1.5) || (sample_width_ui < 0.5) ||
 			(sin.m_type != USB2PMASymbol::TYPE_J))
 		{
-			//Sync until the error happened
-			cap->m_offsets.push_back(offset);
-			cap->m_durations.push_back(din->m_offsets[nin] - offset);
-			cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_SYNC, 0));
+			//First packet? Don't print an error. We're probably just halfway into a previous packet.
+			//Clear out any half-baked garbage.
+			if(first)
+			{
+				cap->m_offsets.clear();
+				cap->m_durations.clear();
+				cap->m_samples.clear();
+			}
+			else
+			{
+				//Sync until the error happened
+				cap->m_offsets.push_back(offset);
+				cap->m_durations.push_back(din->m_offsets[nin] - offset);
+				cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_SYNC, 0));
 
-			//Then error symbol for this K
-			cap->m_offsets.push_back(din->m_offsets[nin]);
-			cap->m_durations.push_back(din->m_durations[nin]);
-			cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_ERROR, 0));
+				//Then error symbol for this K
+				cap->m_offsets.push_back(din->m_offsets[nin]);
+				cap->m_durations.push_back(din->m_durations[nin]);
+				cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_ERROR, 0));
+			}
 
 			//Go back
 			state = STATE_IDLE;
@@ -257,21 +287,32 @@ void USB2PCSDecoder::RefreshIterationSync(
 	}
 
 	//Even numbered position, but not the last
-	else if( (count == 2) || (count == 4) )
+	else if(sync_even)
 	{
 		//Should be one UI long, and a K. Complain if not.
 		if( (sample_width_ui > 1.5) || (sample_width_ui < 0.5) ||
 			(sin.m_type != USB2PMASymbol::TYPE_K) )
 		{
-			//Sync until the error happened
-			cap->m_offsets.push_back(offset);
-			cap->m_durations.push_back(din->m_offsets[nin] - offset);
-			cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_SYNC, 0));
+			//First packet? Don't print an error. We're probably just halfway into a previous packet.
+			//Clear out any half-baked garbage.
+			if(first)
+			{
+				cap->m_offsets.clear();
+				cap->m_durations.clear();
+				cap->m_samples.clear();
+			}
+			else
+			{
+				//Sync until the error happened
+				cap->m_offsets.push_back(offset);
+				cap->m_durations.push_back(din->m_offsets[nin] - offset);
+				cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_SYNC, 0));
 
-			//Then error symbol for this J
-			cap->m_offsets.push_back(din->m_offsets[nin]);
-			cap->m_durations.push_back(din->m_durations[nin]);
-			cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_ERROR, 0));
+				//Then error symbol for this J
+				cap->m_offsets.push_back(din->m_offsets[nin]);
+				cap->m_durations.push_back(din->m_durations[nin]);
+				cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_ERROR, 0));
+			}
 
 			//Go back
 			state = STATE_IDLE;
@@ -285,15 +326,26 @@ void USB2PCSDecoder::RefreshIterationSync(
 		//Should be a K and at least two UIs long
 		if( (sample_width_ui < 1.5) || (sin.m_type != USB2PMASymbol::TYPE_K) )
 		{
-			//Sync until the error happened
-			cap->m_offsets.push_back(offset);
-			cap->m_durations.push_back(din->m_offsets[nin] - offset);
-			cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_SYNC, 0));
+			//First packet? Don't print an error. We're probably just halfway into a previous packet.
+			//Clear out any half-baked garbage.
+			if(first)
+			{
+				cap->m_offsets.clear();
+				cap->m_durations.clear();
+				cap->m_samples.clear();
+			}
+			else
+			{
+				//Sync until the error happened
+				cap->m_offsets.push_back(offset);
+				cap->m_durations.push_back(din->m_offsets[nin] - offset);
+				cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_SYNC, 0));
 
-			//Then error symbol for this J
-			cap->m_offsets.push_back(din->m_offsets[nin]);
-			cap->m_durations.push_back(din->m_durations[nin]);
-			cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_ERROR, 0));
+				//Then error symbol for this J
+				cap->m_offsets.push_back(din->m_offsets[nin]);
+				cap->m_durations.push_back(din->m_durations[nin]);
+				cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_ERROR, 0));
+			}
 
 			state = STATE_IDLE;
 			return;
@@ -303,6 +355,9 @@ void USB2PCSDecoder::RefreshIterationSync(
 		//We end right at the boundary.
 		if(round(sample_width_ui) == 2)
 		{
+			//Got a valid sync. Not the first packet anymore
+			first = false;
+
 			//Save the sync symbol
 			cap->m_offsets.push_back(offset);
 			cap->m_durations.push_back(din->m_offsets[nin] + din->m_durations[nin] - offset);
@@ -339,6 +394,9 @@ void USB2PCSDecoder::RefreshIterationSync(
 			}
 			else
 			{
+				//Got a valid sync. Not the first packet anymore
+				first = false;
+
 				data = 0;
 
 				//Add the ones, LSB to MSB
@@ -356,6 +414,7 @@ void USB2PCSDecoder::RefreshIterationData(
 	size_t nin,
 	size_t nlast,
 	DecodeState& state,
+	BusSpeed speed,
 	size_t& ui_width,
 	USB2PCSWaveform* cap,
 	USB2PMAWaveform* din,
@@ -363,10 +422,10 @@ void USB2PCSDecoder::RefreshIterationData(
 	int64_t& offset,
 	uint8_t& data)
 {
-	size_t sample_ps = din->m_durations[nin] * din->m_timescale;
-	size_t last_sample_ps = din->m_durations[nlast] * din->m_timescale;
-	float sample_width_ui = sample_ps * 1.0f / ui_width;
-	float last_sample_width_ui = last_sample_ps * 1.0f / ui_width;
+	size_t sample_fs = din->m_durations[nin] * din->m_timescale;
+	size_t last_sample_fs = din->m_durations[nlast] * din->m_timescale;
+	float sample_width_ui = sample_fs * 1.0f / ui_width;
+	float last_sample_width_ui = last_sample_fs * 1.0f / ui_width;
 
 	//If this is a SE0, we're done
 	auto sin = din->m_samples[nin];
@@ -374,7 +433,7 @@ void USB2PCSDecoder::RefreshIterationData(
 	{
 		//If we're not two UIs long, we have a problem
 		//TODO: handle reset
-		if(round(sample_width_ui) != 2)
+		if(sample_width_ui < 1.2)
 		{
 			cap->m_offsets.push_back(din->m_offsets[nin]);
 			cap->m_durations.push_back(din->m_durations[nin]);
@@ -410,6 +469,18 @@ void USB2PCSDecoder::RefreshIterationData(
 	//Process the actual data
 	size_t num_bits = round(sample_width_ui);
 	size_t last_num_bits = round(last_sample_width_ui);
+
+	//For high speed, bitstuff errors should be interpreted as EOP.
+	if(speed == SPEED_480M && num_bits > 7) {
+		cap->m_offsets.push_back(din->m_offsets[nin]);
+		cap->m_durations.push_back(din->m_durations[nin]);
+		cap->m_samples.push_back(USB2PCSSymbol(USB2PCSSymbol::TYPE_EOP, 0));
+
+		state = STATE_IDLE;
+		count = 0;
+		return;
+	}
+
 	for(size_t i=0; i<num_bits; i++)
 	{
 		//First bit is either a bitstuff or 0 bit

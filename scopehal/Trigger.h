@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -78,6 +78,13 @@ public:
 
 	static void EnumTriggers(std::vector<std::string>& names);
 	static Trigger* CreateTrigger(std::string name, Oscilloscope* scope);
+
+	/**
+		@brief Serializes this trigger's configuration to a YAML string.
+
+		@return YAML block with this trigger's configuration
+	 */
+	virtual std::string SerializeConfiguration(IDTable& table, size_t indent = 8);
 
 protected:
 	//Class enumeration

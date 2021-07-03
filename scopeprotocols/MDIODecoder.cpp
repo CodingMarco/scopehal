@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -118,9 +118,9 @@ void MDIODecoder::Refresh()
 
 	//Create the capture
 	auto cap = new MDIOWaveform;
-	cap->m_timescale = 1;	//SampleOnRisingEdges() gives us ps level timestamps
+	cap->m_timescale = 1;	//SampleOnRisingEdges() gives us fs level timestamps
 	cap->m_startTimestamp = mdc->m_startTimestamp;
-	cap->m_startPicoseconds = mdc->m_startPicoseconds;
+	cap->m_startFemtoseconds = mdc->m_startFemtoseconds;
 
 	//Maintain MMD state across transactions
 	int mmd_dev = 0;
@@ -135,7 +135,7 @@ void MDIODecoder::Refresh()
 		//Abort if we don't have space for a whole frame
 		if(i + 63 >= dlen)
 		{
-			LogDebug("aborting at i=%zu, %s\n", i, Unit(Unit::UNIT_PS).PrettyPrint(dmdio.m_offsets[i]).c_str());
+			LogDebug("aborting at i=%zu, %s\n", i, Unit(Unit::UNIT_FS).PrettyPrint(dmdio.m_offsets[i]).c_str());
 			break;
 		}
 

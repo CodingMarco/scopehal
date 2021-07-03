@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -138,7 +138,7 @@ void SDDataDecoder::Refresh()
 	auto cap = new SDDataWaveform;
 	cap->m_timescale = 1;
 	cap->m_startTimestamp = clk->m_startTimestamp;
-	cap->m_startPicoseconds = clk->m_startPicoseconds;
+	cap->m_startFemtoseconds = clk->m_startFemtoseconds;
 
 	Packet* pack = NULL;
 	Packet* last_cmdbus_packet = NULL;

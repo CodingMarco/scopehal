@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -249,8 +249,8 @@ void AntikernelLogicAnalyzer::LoadChannels()
 	uint8_t rawperiod[3];
 	SendCommand(CMD_GET_SAMPLE_PERIOD);
 	m_transport->ReadRawData(3, (unsigned char*)rawperiod);
-	m_samplePeriod = (rawperiod[0] << 16) | (rawperiod[1] << 8) | rawperiod[2];
-	//LogDebug("Sample period is %u ps\n", m_samplePeriod);
+	m_samplePeriod = ( (rawperiod[0] << 16) | (rawperiod[1] << 8) | rawperiod[2] ) * 1000;
+	//LogDebug("Sample period is %u fs\n", m_samplePeriod);
 
 	//Get memory aspect ratio info
 	uint8_t rawlen[3];
@@ -265,7 +265,7 @@ void AntikernelLogicAnalyzer::LoadChannels()
 	SendCommand(CMD_GET_MAX_WIDTH);
 	m_maxWidth = Read1ByteReply();
 
-	//Round sampling period down to be an even number of picoseconds
+	//Round sampling period down to be an even number of femtoseconds
 	//(this is needed so the clock can be double-rate and not lose sync)
 	if(m_samplePeriod & 1)
 		m_samplePeriod --;
@@ -320,13 +320,13 @@ bool AntikernelLogicAnalyzer::AcquireData()
 
 	//Synthesize the clock
 	double time = GetTime();
-	double ps = (time - floor(time)) * 1e12f;
+	double fs = (time - floor(time)) * FS_PER_SECOND;
 	{
 		DigitalWaveform* cap = new DigitalWaveform;
 		cap->m_timescale = m_samplePeriod / 2;
 		cap->m_triggerPhase = 0;
 		cap->m_startTimestamp = time;
-		cap->m_startPicoseconds = ps;
+		cap->m_startFemtoseconds = fs;
 		cap->m_samples.resize(m_memoryDepth * 2);
 
 		auto chan = m_channels[0];
@@ -364,7 +364,7 @@ bool AntikernelLogicAnalyzer::AcquireData()
 			cap->m_timescale = m_samplePeriod;
 			cap->m_triggerPhase = 0;
 			cap->m_startTimestamp = time;
-			cap->m_startPicoseconds = ps;
+			cap->m_startFemtoseconds = fs;
 			cap->m_samples.resize(m_memoryDepth);
 
 			//Pull the data
@@ -388,7 +388,7 @@ bool AntikernelLogicAnalyzer::AcquireData()
 			cap->m_timescale = m_samplePeriod;
 			cap->m_triggerPhase = 0;
 			cap->m_startTimestamp = time;
-			cap->m_startPicoseconds = ps;
+			cap->m_startFemtoseconds = fs;
 			cap->m_samples.resize(m_memoryDepth);
 
 			for(size_t j=0; j<m_memoryDepth; j++)
@@ -454,6 +454,11 @@ void AntikernelLogicAnalyzer::Stop()
 	m_triggerArmed = false;
 }
 
+void AntikernelLogicAnalyzer::ForceTrigger()
+{
+	LogError("AntikernelLogicAnalyzer::ForceTrigger() not implemented\n");
+}
+
 bool AntikernelLogicAnalyzer::IsTriggerArmed()
 {
 	return m_triggerArmed;
@@ -475,6 +480,13 @@ void AntikernelLogicAnalyzer::EnableChannel(size_t /*i*/)
 void AntikernelLogicAnalyzer::DisableChannel(size_t /*i*/)
 {
 	//no-op, all channels are always on
+}
+
+vector<OscilloscopeChannel::CouplingType> AntikernelLogicAnalyzer::GetAvailableCouplings(size_t /*i*/)
+{
+	vector<OscilloscopeChannel::CouplingType> ret;
+	ret.push_back(OscilloscopeChannel::COUPLE_SYNTHETIC);
+	return ret;
 }
 
 OscilloscopeChannel::CouplingType AntikernelLogicAnalyzer::GetChannelCoupling(size_t /*i*/)

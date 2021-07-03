@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -161,7 +161,7 @@ void JtagDecoder::Refresh()
 	auto cap = new JtagWaveform;
 	cap->m_timescale = 1;
 	cap->m_startTimestamp = tck->m_startTimestamp;
-	cap->m_startPicoseconds = tck->m_startPicoseconds;
+	cap->m_startFemtoseconds = tck->m_startFemtoseconds;
 
 	//Table for state transitions
 	JtagSymbol::JtagState state_if_tms_high[] =

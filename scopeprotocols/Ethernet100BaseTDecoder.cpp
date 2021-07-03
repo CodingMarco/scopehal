@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -77,12 +77,12 @@ void Ethernet100BaseTDecoder::Refresh()
 	EthernetWaveform* cap = new EthernetWaveform;
 	cap->m_timescale = din->m_timescale;
 	cap->m_startTimestamp = din->m_startTimestamp;
-	cap->m_startPicoseconds = din->m_startPicoseconds;
+	cap->m_startFemtoseconds = din->m_startFemtoseconds;
 
-	const int64_t ui_width 			= 8000;
+	const int64_t ui_width 			= 8000000;
 	const int64_t ui_width_samples	= ui_width / din->m_timescale;
-	//const int64_t ui_halfwidth 		= 4000;
-	//const int64_t jitter_tol 		= 1500;
+	//const int64_t ui_halfwidth 		= 4000000;
+	//const int64_t jitter_tol 		= 1500000;
 
 	//Logical voltage of each point after some hysteresis
 	vector<EmptyConstructorWrapper<int>> voltages;
@@ -416,22 +416,32 @@ bool Ethernet100BaseTDecoder::TrySync(
 		( (!bits.m_samples[idle_offset + 10]) << 0 );
 
 	//Descramble
-	size_t len = bits.m_samples.size();
-	for(unsigned int i=idle_offset + 11; i<len && i<stop; i++)
+	stop = min(stop, bits.m_samples.size());
+	size_t start = idle_offset + 11;
+	size_t len = stop - start;
+	descrambled_bits.m_offsets.reserve(len);
+	descrambled_bits.m_durations.reserve(len);
+	descrambled_bits.m_samples.reserve(len);
+	size_t window = 64 + idle_offset + 11;
+	for(size_t i=start; i < stop; i++)
 	{
 		lfsr = (lfsr << 1) ^ ((lfsr >> 8)&1) ^ ((lfsr >> 10)&1);
+
 		descrambled_bits.m_offsets.push_back(bits.m_offsets[i]);
 		descrambled_bits.m_durations.push_back(bits.m_durations[i]);
 		bool b = bits.m_samples[i] ^ (lfsr & 1);
 		descrambled_bits.m_samples.push_back(b);
-	}
 
-	//We should have at least 64 "1" bits in a row once the descrambling is done.
-	//The minimum inter-frame gap is a lot bigger than this.
-	for(int i=0; i<64; i++)
-	{
-		if(descrambled_bits.m_samples[i + idle_offset + 11] != 1)
-			return false;
+		if(descrambled_bits.m_samples.size() == window)
+		{
+			//We should have at least 64 "1" bits in a row once the descrambling is done.
+			//The minimum inter-frame gap is a lot bigger than this.
+			for(int j=0; j<64; j++)
+			{
+				if(descrambled_bits.m_samples[j + idle_offset + 11] != 1)
+					return false;
+			}
+		}
 	}
 
 	//Synced, all good

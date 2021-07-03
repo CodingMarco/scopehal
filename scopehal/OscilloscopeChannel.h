@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -48,12 +48,21 @@ class Oscilloscope;
 class OscilloscopeChannel
 {
 public:
+	//Oscilloscope has to be able to call AddStream()
+	friend class Oscilloscope;
+	friend class MockOscilloscope;
+
 	enum ChannelType
 	{
+		//Conventional time-series waveforms (or similar graphs like a FFT)
 		CHANNEL_TYPE_ANALOG,
 		CHANNEL_TYPE_DIGITAL,
-		CHANNEL_TYPE_EYE,
 
+		//2D density plots
+		CHANNEL_TYPE_EYE,
+		CHANNEL_TYPE_SPECTROGRAM,
+
+		//Special channels not used for display
 		CHANNEL_TYPE_TRIGGER,	//external trigger input, doesn't have data capture
 
 		//Complex datatype from a protocol decoder
@@ -153,12 +162,15 @@ public:
 		COUPLE_DC_1M,		//1M ohm, DC coupled
 		COUPLE_AC_1M,		//1M ohm, AC coupled
 		COUPLE_DC_50,		//50 ohm, DC coupled
+		COUPLE_AC_50,		//50 ohm, AC coupled
 		COUPLE_GND,			//tie to ground
 		COUPLE_SYNTHETIC	//channel is math, digital, or otherwise not a direct voltage measurement
 	};
 
 	virtual CouplingType GetCoupling();
 	virtual void SetCoupling(CouplingType type);
+
+	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings();
 
 	virtual double GetAttenuation();
 	virtual void SetAttenuation(double atten);
@@ -188,6 +200,16 @@ public:
 	void SetDigitalThreshold(float level);
 
 	void SetCenterFrequency(int64_t freq);
+
+	bool CanAutoZero();
+	void AutoZero();
+	std::string GetProbeName();
+
+	virtual bool CanInvert();
+	virtual void Invert(bool invert);
+	virtual bool IsInverted();
+
+	virtual void SetInputMux(size_t select);
 
 	void SetDefaultDisplayName();
 protected:

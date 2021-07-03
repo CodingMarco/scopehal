@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -59,10 +59,16 @@ public:
 		CAT_SERIAL,			//Serial communications
 		CAT_MISC,			//anything not otherwise categorized
 		CAT_POWER,			//Power analysis
-		CAT_RF				//Frequency domain analysis (FFT etc) and other RF stuff
+		CAT_RF,				//Frequency domain analysis (FFT etc) and other RF stuff
+		CAT_GENERATION		//Waveform generation and synthesis
 	};
 
-	Filter(OscilloscopeChannel::ChannelType type, const std::string& color, Category cat);
+	Filter(
+		OscilloscopeChannel::ChannelType type,
+		const std::string& color,
+		Category cat,
+		const std::string& kernelPath = "",
+		const std::string& kernelName = "");
 	virtual ~Filter();
 
 	/**
@@ -78,6 +84,8 @@ public:
 	bool IsUsingDefaultName()
 	{ return m_usingDefault; }
 
+	virtual bool IsScalarOutput();
+
 	virtual void Refresh() =0;
 
 	virtual void AddRef();
@@ -89,6 +97,13 @@ public:
 	//Get all currently existing filters
 	static std::set<Filter*> GetAllInstances()
 	{ return m_filters; }
+
+	//Set all currently existing filters to the dirty state
+	static void SetAllFiltersDirty()
+	{
+		for(auto f : m_filters)
+			f->SetDirty();
+	}
 
 	/**
 		@brief Clears any integrated data from past triggers (e.g. eye patterns).
@@ -125,13 +140,9 @@ public:
 	/**
 		@brief Serialize this decoder's configuration to a string
 	 */
-	virtual std::string SerializeConfiguration(IDTable& table);
+	virtual std::string SerializeConfiguration(IDTable& table, size_t indent = 8);
 
-	/**
-		@brief Load configuration from a save file
-	 */
 	virtual void LoadParameters(const YAML::Node& node, IDTable& table);
-	virtual void LoadInputs(const YAML::Node& node, IDTable& table);
 
 	/**
 		@brief Standard colors for protocol decode overlays.
@@ -185,6 +196,11 @@ protected:
 			i ++;
 	}
 
+	AnalogWaveform* SetupEmptyOutputWaveform(WaveformBase* din, size_t stream, bool clear=true);
+	DigitalWaveform* SetupEmptyDigitalOutputWaveform(WaveformBase* din, size_t stream);
+	AnalogWaveform* SetupOutputWaveform(WaveformBase* din, size_t stream, size_t skipstart, size_t skipend);
+	DigitalWaveform* SetupDigitalOutputWaveform(WaveformBase* din, size_t stream, size_t skipstart, size_t skipend);
+
 public:
 	//Text formatting for CHANNEL_TYPE_COMPLEX decodes
 	virtual Gdk::Color GetColor(int i);
@@ -213,25 +229,37 @@ public:
 	static void SampleOnFallingEdges(DigitalWaveform* data, DigitalWaveform* clock, DigitalWaveform& samples);
 
 	//Find interpolated zero crossings of a signal
+	static void FindRisingEdges(AnalogWaveform* data, float threshold, std::vector<int64_t>& edges);
 	static void FindZeroCrossings(AnalogWaveform* data, float threshold, std::vector<int64_t>& edges);
-	static void FindZeroCrossings(AnalogWaveform* data, float threshold, std::vector<double>& edges);
 
 	//Find edges in a signal (discarding repeated samples)
 	static void FindZeroCrossings(DigitalWaveform* data, std::vector<int64_t>& edges);
 	static void FindRisingEdges(DigitalWaveform* data, std::vector<int64_t>& edges);
 	static void FindFallingEdges(DigitalWaveform* data, std::vector<int64_t>& edges);
-	static void FindZeroCrossings(DigitalWaveform* data, std::vector<double>& edges);
+
+	static void ClearAnalysisCache();
+
+	//Checksum helpers
+	static uint32_t CRC32(std::vector<uint8_t>& bytes, size_t start, size_t end);
 
 protected:
 	//Common text formatting
 	virtual std::string GetTextForAsciiChannel(int i, size_t stream);
+
+#ifdef HAVE_OPENCL
+
+	//OpenCL state
+	cl::Program* m_program;
+	cl::Kernel* m_kernel;
+
+#endif
 
 public:
 	typedef Filter* (*CreateProcType)(const std::string&);
 	static void DoAddDecoderClass(const std::string& name, CreateProcType proc);
 
 	static void EnumProtocols(std::vector<std::string>& names);
-	static Filter* CreateFilter(const std::string& protocol, const std::string& color);
+	static Filter* CreateFilter(const std::string& protocol, const std::string& color = "#ffffff");
 
 protected:
 	//Class enumeration
@@ -240,6 +268,10 @@ protected:
 
 	//Object enumeration
 	static std::set<Filter*> m_filters;
+
+	//Caching
+	static std::mutex m_cacheMutex;
+	static std::map<std::pair<WaveformBase*, float>, std::vector<int64_t> > m_zeroCrossingCache;
 };
 
 #define PROTOCOL_DECODER_INITPROC(T) \

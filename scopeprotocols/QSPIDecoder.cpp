@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -119,17 +119,19 @@ void QSPIDecoder::Refresh()
 	auto cap = new SPIWaveform;
 	cap->m_timescale = clk->m_timescale;
 	cap->m_startTimestamp = clk->m_startTimestamp;
-	cap->m_startPicoseconds = clk->m_startPicoseconds;
+	cap->m_startFemtoseconds = clk->m_startFemtoseconds;
+	cap->m_triggerPhase = clk->m_triggerPhase;
 
 	//TODO: packets based on CS# pulses
 
 	//Loop over the data and look for transactions
 	enum
 	{
+		STATE_IDLE,
 		STATE_DESELECTED,
 		STATE_SELECTED_CLKLO,
 		STATE_SELECTED_CLKHI
-	} state = STATE_DESELECTED;
+	} state = STATE_IDLE;
 
 	bool high_nibble		= true;
 	int64_t bytestart		= 0;
@@ -165,6 +167,12 @@ void QSPIDecoder::Refresh()
 
 		switch(state)
 		{
+			//Just started the decode, wait for CS# to go high (and don't attempt to decode a partial packet)
+			case STATE_IDLE:
+				if(cur_cs)
+					state = STATE_DESELECTED;
+				break;
+
 			//wait for falling edge of CS#
 			case STATE_DESELECTED:
 				if(!cur_cs)

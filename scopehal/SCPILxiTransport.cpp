@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -173,7 +173,7 @@ void SCPILxiTransport::SendRawData(size_t len, const unsigned char* buf)
 	lxi_send(m_device, const_cast<char*>(reinterpret_cast<const char*>(buf)), len, m_timeout);
 }
 
-void SCPILxiTransport::ReadRawData(size_t len, unsigned char* buf)
+size_t SCPILxiTransport::ReadRawData(size_t len, unsigned char* buf)
 {
 	// Data in the staging buffer is assumed to always be a consequence of a SendCommand request.
 	// Since we fetch all the reply data in one go, once all this data has been fetched, we mark
@@ -181,7 +181,7 @@ void SCPILxiTransport::ReadRawData(size_t len, unsigned char* buf)
 	// is issued.
 
 	if (!m_staging_buf)
-		return;
+		return 0;
 
 	if (!m_data_depleted)
 	{
@@ -211,7 +211,10 @@ void SCPILxiTransport::ReadRawData(size_t len, unsigned char* buf)
 		// When this happens, the SCPIDevice is fetching more data from device than what
 		// could be expected from the SendCommand that was issued.
 		LogDebug("ReadRawData: data depleted.\n");
+		return 0;
 	}
+
+	return len;
 }
 
 bool SCPILxiTransport::IsCommandBatchingSupported()

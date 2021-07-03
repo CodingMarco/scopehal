@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -29,6 +29,7 @@
 
 #include "scopehal.h"
 #include "UartTrigger.h"
+#include "SiglentSCPIOscilloscope.h"
 
 using namespace std;
 
@@ -49,6 +50,13 @@ UartTrigger::UartTrigger(Oscilloscope* scope)
 	m_parameters[m_ptypename].AddEnumValue("Even", PARITY_EVEN);
 	m_parameters[m_ptypename].AddEnumValue("Odd", PARITY_ODD);
 
+	//Constant 0/1 parity bits are not supported by some scopes as they're pretty rare
+	if(dynamic_cast<SiglentSCPIOscilloscope*>(scope) != NULL)
+	{
+		m_parameters[m_ptypename].AddEnumValue("Mark", PARITY_MARK);
+		m_parameters[m_ptypename].AddEnumValue("Space", PARITY_SPACE);
+	}
+
 	m_typename = "Trigger Type";
 	m_parameters[m_typename] = FilterParameter(FilterParameter::TYPE_ENUM, Unit(Unit::UNIT_COUNTS));
 	m_parameters[m_typename].AddEnumValue("Data", TYPE_DATA);
@@ -65,7 +73,6 @@ UartTrigger::UartTrigger(Oscilloscope* scope)
 
 UartTrigger::~UartTrigger()
 {
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

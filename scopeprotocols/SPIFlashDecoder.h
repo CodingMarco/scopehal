@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -66,6 +66,9 @@ public:
 	enum FlashCommand
 	{
 		CMD_READ_STATUS_REGISTER,
+		CMD_READ_STATUS_REGISTER_1,
+		CMD_READ_STATUS_REGISTER_2,
+		CMD_READ_STATUS_REGISTER_3,
 		CMD_WRITE_STATUS_REGISTER,
 		CMD_READ_JEDEC_ID,
 		CMD_READ,			//Read, SPI address, SPI data
@@ -78,6 +81,11 @@ public:
 		CMD_BLOCK_ERASE,
 		CMD_PAGE_PROGRAM,
 		CMD_QUAD_PAGE_PROGRAM,
+		CMD_READ_SFDP,		//read serial flash discovery parameters
+		CMD_ADDR_32BIT,
+		CMD_ADDR_24BIT,
+		CMD_RELEASE_PD,
+		CMD_ENABLE_RESET,
 
 		//Winbond W25N specific
 		CMD_W25N_READ_PAGE,
@@ -109,6 +117,7 @@ class SPIFlashDecoder : public PacketDecoder
 {
 public:
 	SPIFlashDecoder(const std::string& color);
+	virtual ~SPIFlashDecoder();
 
 	virtual std::string GetText(int i);
 	virtual Gdk::Color GetColor(int i);
@@ -135,6 +144,7 @@ public:
 	enum FlashType
 	{
 		FLASH_TYPE_GENERIC_3BYTE_ADDRESS,
+		FLASH_TYPE_GENERIC_4BYTE_ADDRESS,
 		FLASH_TYPE_WINBOND_W25N
 	};
 
@@ -147,6 +157,10 @@ protected:
 	std::string GetPartID(SPIFlashWaveform* cap, const SPIFlashSymbol& s, int i);
 
 	std::string m_typename;
+	std::string m_outfile;
+
+	std::string m_cachedfname;
+	FILE* m_fpOut;
 };
 
 #endif

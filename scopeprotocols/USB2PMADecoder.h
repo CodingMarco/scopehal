@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2019 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -84,6 +84,16 @@ public:
 
 	virtual std::string GetText(int i);
 	virtual Gdk::Color GetColor(int i);
+
+	enum Speed
+	{
+		SPEED_LOW,
+		SPEED_FULL,
+		SPEED_HIGH
+	};
+
+	void SetSpeed(Speed s)
+	{ m_parameters[m_speedname].SetIntVal(s); }
 
 	PROTOCOL_DECODER_INITPROC(USB2PMADecoder)
 

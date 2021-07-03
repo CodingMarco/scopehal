@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -140,7 +140,7 @@ void MagnitudeFilter::Refresh()
 	//Copy our time scales from the input
 	cap->m_timescale 		= a->m_timescale;
 	cap->m_startTimestamp 	= a->m_startTimestamp;
-	cap->m_startPicoseconds = a->m_startPicoseconds;
+	cap->m_startFemtoseconds = a->m_startFemtoseconds;
 
 	SetData(cap, 0);
 }

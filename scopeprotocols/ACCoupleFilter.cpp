@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -106,18 +106,9 @@ void ACCoupleFilter::Refresh()
 
 	//Subtract all of our samples
 	auto len = din->m_samples.size();
-	auto cap = new AnalogWaveform;
-	cap->Resize(len);
-	cap->CopyTimestamps(din);
+	auto cap = SetupOutputWaveform(din, 0, 0, 0);
 	float* fsrc = (float*)__builtin_assume_aligned(&din->m_samples[0], 16);
 	float* fdst = (float*)__builtin_assume_aligned(&cap->m_samples[0], 16);
 	for(size_t i=0; i<len; i++)
 		fdst[i] = fsrc[i] - average;
-
-	//Copy our time scales from the input
-	cap->m_timescale 		= din->m_timescale;
-	cap->m_startTimestamp 	= din->m_startTimestamp;
-	cap->m_startPicoseconds = din->m_startPicoseconds;
-
-	SetData(cap, 0);
 }

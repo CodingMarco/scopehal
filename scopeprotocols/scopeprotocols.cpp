@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -49,21 +49,30 @@ void ScopeProtocolStaticInit()
 	AddDecoderClass(ClockRecoveryFilter);
 	AddDecoderClass(CTLEFilter);
 	AddDecoderClass(CurrentShuntFilter);
+	AddDecoderClass(DCDMeasurement);
 	AddDecoderClass(DCOffsetFilter);
+	AddDecoderClass(DDJMeasurement);
+	AddDecoderClass(DDR1Decoder);
 	AddDecoderClass(DDR3Decoder);
 	AddDecoderClass(DeEmbedFilter);
 	AddDecoderClass(DeskewFilter);
+	AddDecoderClass(DigitalToPAM4Filter);
+	AddDecoderClass(DigitalToNRZFilter);
 	AddDecoderClass(DownconvertFilter);
 	AddDecoderClass(DownsampleFilter);
 	AddDecoderClass(DPhyDataDecoder);
 	AddDecoderClass(DPhyHSClockRecoveryFilter);
 	AddDecoderClass(DPhySymbolDecoder);
+	AddDecoderClass(DramClockFilter);
 	AddDecoderClass(DramRefreshActivateMeasurement);
 	AddDecoderClass(DramRowColumnLatencyMeasurement);
 	AddDecoderClass(DSIFrameDecoder);
 	AddDecoderClass(DSIPacketDecoder);
 	AddDecoderClass(DutyCycleMeasurement);
 	AddDecoderClass(DVIDecoder);
+	AddDecoderClass(EmphasisFilter);
+	AddDecoderClass(EmphasisRemovalFilter);
+	AddDecoderClass(ESPIDecoder);
 	AddDecoderClass(Ethernet10BaseTDecoder);
 	AddDecoderClass(Ethernet100BaseTDecoder);
 	AddDecoderClass(Ethernet1000BaseXDecoder);
@@ -80,38 +89,57 @@ void ScopeProtocolStaticInit()
 	AddDecoderClass(EyeWidthMeasurement);
 	AddDecoderClass(FallMeasurement);
 	AddDecoderClass(FFTFilter);
+	AddDecoderClass(FIRFilter);
 	AddDecoderClass(FrequencyMeasurement);
+	AddDecoderClass(HistogramFilter);
 	AddDecoderClass(HorizontalBathtub);
 	AddDecoderClass(I2CDecoder);
 	AddDecoderClass(I2CEepromDecoder);
 	AddDecoderClass(IBM8b10bDecoder);
 	AddDecoderClass(IPv4Decoder);
+	AddDecoderClass(ISIMeasurement);
+	AddDecoderClass(JitterFilter);
+	AddDecoderClass(JitterSpectrumFilter);
 	AddDecoderClass(JtagDecoder);
 	AddDecoderClass(MagnitudeFilter);
 	AddDecoderClass(MDIODecoder);
+	AddDecoderClass(MilStd1553Decoder);
 	AddDecoderClass(MovingAverageFilter);
 	AddDecoderClass(MultiplyFilter);
-	AddDecoderClass(OFDMDemodulator);
+	AddDecoderClass(NoiseFilter);
+	//AddDecoderClass(OFDMDemodulator);
 	AddDecoderClass(OneWireDecoder);
 	AddDecoderClass(OvershootMeasurement);
 	AddDecoderClass(ParallelBus);
+	AddDecoderClass(PCIeDataLinkDecoder);
+	AddDecoderClass(PCIeGen2LogicalDecoder);
+	AddDecoderClass(PCIeTransportDecoder);
 	AddDecoderClass(PeakHoldFilter);
 	AddDecoderClass(PeriodMeasurement);
+	AddDecoderClass(PhaseMeasurement);
 	AddDecoderClass(PkPkMeasurement);
+	AddDecoderClass(PRBSGeneratorFilter);
+	AddDecoderClass(RjBUjFilter);
 	AddDecoderClass(QSPIDecoder);
 	AddDecoderClass(QuadratureDecoder);
 	AddDecoderClass(RiseMeasurement);
 	AddDecoderClass(SDCmdDecoder);
 	AddDecoderClass(SDDataDecoder);
+	AddDecoderClass(SpectrogramFilter);
 	AddDecoderClass(SPIDecoder);
 	AddDecoderClass(SPIFlashDecoder);
+	AddDecoderClass(StepGeneratorFilter);
 	AddDecoderClass(SubtractFilter);
 	AddDecoderClass(SWDDecoder);
 	AddDecoderClass(SWDMemAPDecoder);
 	AddDecoderClass(TachometerFilter);
+	AddDecoderClass(TappedDelayLineFilter);
+	AddDecoderClass(TDRFilter);
+	//AddDecoderClass(TDRStepDeEmbedFilter);
 	AddDecoderClass(ThresholdFilter);
 	AddDecoderClass(TIEMeasurement);
 	AddDecoderClass(TMDSDecoder);
+	AddDecoderClass(ToneGeneratorFilter);
 	AddDecoderClass(TopMeasurement);
 	AddDecoderClass(UARTDecoder);
 	AddDecoderClass(UartClockRecoveryFilter);
@@ -121,6 +149,7 @@ void ScopeProtocolStaticInit()
 	AddDecoderClass(USB2PacketDecoder);
 	AddDecoderClass(USB2PCSDecoder);
 	AddDecoderClass(USB2PMADecoder);
+	AddDecoderClass(VerticalBathtub);
 	AddDecoderClass(Waterfall);
 	AddDecoderClass(WindowedAutocorrelationFilter);
 

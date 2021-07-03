@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -51,7 +51,7 @@ public:
 	, m_stream(0)
 	{}
 
-	StreamDescriptor(OscilloscopeChannel* channel, size_t stream)
+	StreamDescriptor(OscilloscopeChannel* channel, size_t stream = 0)
 		: m_channel(channel)
 		, m_stream(stream)
 	{}
@@ -92,6 +92,8 @@ public:
 	FlowGraphNode();
 	virtual ~FlowGraphNode();
 
+	void DetachInputs();
+
 	//Inputs
 public:
 	size_t GetInputCount();
@@ -113,6 +115,19 @@ public:
 
 	ParameterMapType::iterator GetParamEnd()
 	{ return m_parameters.end(); }
+
+	/**
+		@brief Serializes this trigger's configuration to a YAML string.
+
+		@return YAML block with this trigger's configuration
+	 */
+	virtual std::string SerializeConfiguration(IDTable& table, size_t indent = 8);
+
+	/**
+		@brief Load configuration from a save file
+	 */
+	virtual void LoadParameters(const YAML::Node& node, IDTable& table);
+	virtual void LoadInputs(const YAML::Node& node, IDTable& table);
 
 	//Input handling helpers
 protected:

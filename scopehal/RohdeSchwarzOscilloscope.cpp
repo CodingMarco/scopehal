@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -26,6 +26,16 @@
 * POSSIBILITY OF SUCH DAMAGE.                                                                                          *
 *                                                                                                                      *
 ***********************************************************************************************************************/
+
+/*
+ * Current State
+ * =============
+ * - Digital channels not implemented
+ * - Only basic edge trigger supported. Coupling, hysteresis, B trigger not implemented
+ *
+ * RS Oscilloscope driver parts (c) 2021 Francisco Sedano, tested on RTM3004
+ */
+
 
 #include "scopehal.h"
 #include "RohdeSchwarzOscilloscope.h"
@@ -138,10 +148,39 @@ RohdeSchwarzOscilloscope::RohdeSchwarzOscilloscope(SCPITransport* transport)
 		LogDebug("* None\n");
 	for(auto sopt : options)
 	{
+		LogDebug(" * %s ",sopt.c_str());
 		if(opt == "B243")
-			LogDebug("* 350 MHz bandwidth upgrade for RTM3004\n");
+			LogDebug("(350 MHz bandwidth upgrade for RTM3004)\n");
+		else if(sopt == "K1")
+			LogDebug("(SPI Bus)\n");
+		else if(sopt == "K2")
+			LogDebug("(UART / RS232)\n");
+		else if(sopt == "K3")
+			LogDebug("(CAN)\n");
+		else if(sopt == "K5")
+			LogDebug("(Audio signals)\n");
+		else if(sopt == "B1") {
+			// TODO add digital channels
+			LogDebug("(Mixed signal, 16 channels)\n");
+		}
+		else if(sopt == "K31")
+			LogDebug("(Power analysis)\n");
+		else if(sopt == "K6")
+			LogDebug("(MIL-1553)\n");
+		else if(sopt == "K7")
+			LogDebug("(ARINC 429)\n");
+		else if(sopt == "K15")
+			LogDebug("(History)\n");
+		else if(sopt == "K18")
+			LogDebug("(Spectrum analysis and spectrogram)\n");
+		else if(sopt == "B6")
+			LogDebug("(Signal generation)\n");
+		else if(sopt == "B2410")
+			LogDebug("(Bandwidth 1 GHz)\n");
+		else if(sopt == "K36")
+			LogDebug("(Frequency response analysis)\n");
 		else
-			LogDebug("* %s (unknown)\n", sopt.c_str());
+			LogDebug("(unknown)\n");
 	}
 }
 
@@ -172,6 +211,8 @@ void RohdeSchwarzOscilloscope::FlushConfigCache()
 	m_channelOffsets.clear();
 	m_channelVoltageRanges.clear();
 	m_channelsEnabled.clear();
+	m_channelCouplings.clear();
+	m_channelAttenuations.clear();
 
 	delete m_trigger;
 	m_trigger = NULL;
@@ -196,7 +237,7 @@ bool RohdeSchwarzOscilloscope::IsChannelEnabled(size_t i)
 
 	m_transport->SendCommand(m_channels[i]->GetHwname() + ":STAT?");
 	string reply = m_transport->ReadReply();
-	if(reply == "OFF")
+	if(reply == "OFF" || reply == "0")
 	{
 		m_channelsEnabled[i] = false;
 		return false;
@@ -212,85 +253,119 @@ void RohdeSchwarzOscilloscope::EnableChannel(size_t i)
 {
 	lock_guard<recursive_mutex> lock(m_mutex);
 	m_transport->SendCommand(m_channels[i]->GetHwname() + ":STAT ON");
+
+	lock_guard<recursive_mutex> lock2(m_cacheMutex);
+	m_channelsEnabled[i] = true;
 }
 
 void RohdeSchwarzOscilloscope::DisableChannel(size_t i)
 {
 	lock_guard<recursive_mutex> lock(m_mutex);
 	m_transport->SendCommand(m_channels[i]->GetHwname() + ":STAT OFF");
+
+	lock_guard<recursive_mutex> lock2(m_cacheMutex);
+	m_channelsEnabled[i] = false;
+}
+
+vector<OscilloscopeChannel::CouplingType> RohdeSchwarzOscilloscope::GetAvailableCouplings(size_t /*i*/)
+{
+	vector<OscilloscopeChannel::CouplingType> ret;
+	ret.push_back(OscilloscopeChannel::COUPLE_DC_1M);
+	ret.push_back(OscilloscopeChannel::COUPLE_AC_1M);
+	ret.push_back(OscilloscopeChannel::COUPLE_DC_50);
+	ret.push_back(OscilloscopeChannel::COUPLE_GND);
+	return ret;
 }
 
 OscilloscopeChannel::CouplingType RohdeSchwarzOscilloscope::GetChannelCoupling(size_t i)
 {
-	lock_guard<recursive_mutex> lock(m_mutex);
+	{
+		lock_guard<recursive_mutex> lock(m_cacheMutex);
+		if(m_channelCouplings.find(i) != m_channelCouplings.end())
+			return m_channelCouplings[i];
+	}
 
-	m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP?");
-	string reply = m_transport->ReadReply();
+	string reply;
+	{
+		lock_guard<recursive_mutex> lock(m_mutex);
 
-	if(reply == "ACLimit")
-		return OscilloscopeChannel::COUPLE_AC_1M;
-	else if(reply == "DCLimit")
-		return OscilloscopeChannel::COUPLE_DC_1M;
+		m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP?");
+		reply = m_transport->ReadReply();
+	}
+	OscilloscopeChannel::CouplingType coupling;
+
+	if(reply == "ACLimit" || reply == "ACL")
+		coupling = OscilloscopeChannel::COUPLE_AC_1M;
+	else if(reply == "DCLimit" || reply == "DCL")
+		coupling = OscilloscopeChannel::COUPLE_DC_1M;
 	else if(reply == "GND")
-		return OscilloscopeChannel::COUPLE_GND;
+		coupling = OscilloscopeChannel::COUPLE_GND;
 	else if(reply == "DC")
-		return OscilloscopeChannel::COUPLE_DC_50;
-
+		coupling = OscilloscopeChannel::COUPLE_DC_50;
 	else
 	{
 		LogWarning("invalid coupling value\n");
-		return OscilloscopeChannel::COUPLE_DC_50;
+		coupling = OscilloscopeChannel::COUPLE_DC_50;
 	}
+
+	lock_guard<recursive_mutex> lock(m_cacheMutex);
+	m_channelCouplings[i] = coupling;
+	return coupling;
 }
 
 void RohdeSchwarzOscilloscope::SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type)
 {
-	lock_guard<recursive_mutex> lock(m_mutex);
-	switch(type)
 	{
-		case OscilloscopeChannel::COUPLE_DC_50:
-			m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP DC");
-			break;
+		lock_guard<recursive_mutex> lock(m_mutex);
+		switch(type)
+		{
+			case OscilloscopeChannel::COUPLE_DC_50:
+				m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP DC");
+				break;
 
-		case OscilloscopeChannel::COUPLE_AC_1M:
-			m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP ACLimit");
-			break;
+			case OscilloscopeChannel::COUPLE_AC_1M:
+				m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP ACLimit");
+				break;
 
-		case OscilloscopeChannel::COUPLE_DC_1M:
-			m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP DCLimit");
-			break;
+			case OscilloscopeChannel::COUPLE_DC_1M:
+				m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP DCLimit");
+				break;
 
-		case OscilloscopeChannel::COUPLE_GND:
-			m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP GND");
-			break;
+			case OscilloscopeChannel::COUPLE_GND:
+				m_transport->SendCommand(m_channels[i]->GetHwname() + ":COUP GND");
+				break;
 
-		default:
-			LogError("Invalid coupling for channel\n");
+			default:
+				LogError("Invalid coupling for channel\n");
+		}
 	}
+	lock_guard<recursive_mutex> lock(m_cacheMutex);
+	m_channelCouplings[i] = type;
 }
 
-double RohdeSchwarzOscilloscope::GetChannelAttenuation(size_t /*i*/)
+double RohdeSchwarzOscilloscope::GetChannelAttenuation(size_t i)
 {
-	/*
-	lock_guard<recursive_mutex> lock(m_mutex);
-
-	m_transport->SendCommand(m_channels[i]->GetHwname() + ":PROB?");
-
-	string reply = m_transport->ReadReply();
-	double atten;
-	sscanf(reply.c_str(), "%lf", &atten);
-	return atten;
-	*/
-
-	LogWarning("RohdeSchwarzOscilloscope::GetChannelAttenuation unimplemented\n");
+	{
+		lock_guard<recursive_mutex> lock(m_cacheMutex);
+		if(m_channelAttenuations.find(i) != m_channelAttenuations.end())
+			return m_channelAttenuations[i];
+	}
+	// FIXME Don't know SCPI to get this, relying on cache
 	return 1;
 }
 
-void RohdeSchwarzOscilloscope::SetChannelAttenuation(size_t /*i*/, double /*atten*/)
+void RohdeSchwarzOscilloscope::SetChannelAttenuation(size_t i, double atten)
 {
-	//FIXME
+	{
+		lock_guard<recursive_mutex> lock(m_cacheMutex);
+		m_channelAttenuations[i] = atten;
+	}
 
-	LogWarning("RohdeSchwarzOscilloscope::SetChannelAttenuation unimplemented\n");
+	lock_guard<recursive_mutex> lock(m_mutex);
+
+	char cmd[128];
+	snprintf(cmd, sizeof(cmd), "PROB%zd:SET:ATT:MAN ", m_channels[i]->GetIndex()+1);
+	PushFloat(cmd, atten);
 }
 
 int RohdeSchwarzOscilloscope::GetChannelBandwidthLimit(size_t /*i*/)
@@ -335,10 +410,17 @@ double RohdeSchwarzOscilloscope::GetChannelVoltageRange(size_t i)
 	return range;
 }
 
-void RohdeSchwarzOscilloscope::SetChannelVoltageRange(size_t /*i*/, double /*range*/)
+void RohdeSchwarzOscilloscope::SetChannelVoltageRange(size_t i, double range)
 {
-	//FIXME
-	LogWarning("RohdeSchwarzOscilloscope::SetChannelVoltageRange unimplemented\n");
+	{
+		lock_guard<recursive_mutex> lock(m_cacheMutex);
+		m_channelVoltageRanges[i] = range;
+	}
+
+	lock_guard<recursive_mutex> lock(m_mutex);
+	char cmd[128];
+	snprintf(cmd, sizeof(cmd), "%s:RANGE %.4f", m_channels[i]->GetHwname().c_str(), range);
+	m_transport->SendCommand(cmd);
 }
 
 OscilloscopeChannel* RohdeSchwarzOscilloscope::GetExternalTrigger()
@@ -370,10 +452,17 @@ double RohdeSchwarzOscilloscope::GetChannelOffset(size_t i)
 	return offset;
 }
 
-void RohdeSchwarzOscilloscope::SetChannelOffset(size_t /*i*/, double /*offset*/)
+void RohdeSchwarzOscilloscope::SetChannelOffset(size_t i, double offset)
 {
-	//FIXME
-	LogWarning("RohdeSchwarzOscilloscope::SetChannelOffset unimplemented\n");
+	{
+		lock_guard<recursive_mutex> lock(m_cacheMutex);
+		m_channelOffsets[i] = offset;
+	}
+
+	lock_guard<recursive_mutex> lock(m_mutex);
+	char cmd[128];
+	snprintf(cmd, sizeof(cmd), "%s:OFFS %.4f", m_channels[i]->GetHwname().c_str(), -offset);
+	m_transport->SendCommand(cmd);
 }
 
 Oscilloscope::TriggerMode RohdeSchwarzOscilloscope::PollTrigger()
@@ -406,6 +495,7 @@ bool RohdeSchwarzOscilloscope::AcquireData()
 	size_t length;
 	int ignored;
 	map<int, vector<AnalogWaveform*> > pending_waveforms;
+	bool any_data = false;
 	for(size_t i=0; i<m_analogChannelCount; i++)
 	{
 		if(!IsChannelEnabled(i))
@@ -414,23 +504,28 @@ bool RohdeSchwarzOscilloscope::AcquireData()
 		//This is basically the same function as a LeCroy WAVEDESC, but much less detailed
 		m_transport->SendCommand(m_channels[i]->GetHwname() + ":DATA:HEAD?");
 		string reply = m_transport->ReadReply();
-		sscanf(reply.c_str(), "%lf,%lf,%zu,%d", &xstart, &xstop, &length, &ignored);
-
+		int rc = sscanf(reply.c_str(), "%lf,%lf,%zu,%d", &xstart, &xstop, &length, &ignored);
+		if (rc != 4 || length == 0) {
+			/* No data - Skip query the scope and move on */
+			pending_waveforms[i].push_back(NULL);
+			continue;
+		}
+		any_data = true;
 		//Figure out the sample rate
 		double capture_len_sec = xstop - xstart;
 		double sec_per_sample = capture_len_sec / length;
-		int64_t ps_per_sample = round(sec_per_sample * 1e12f);
-		//LogDebug("%ld ps/sample\n", ps_per_sample);
+		int64_t fs_per_sample = round(sec_per_sample * FS_PER_SECOND);
+		//LogDebug("%ld fs/sample\n", fs_per_sample);
 
 		float* temp_buf = new float[length];
 
 		//Set up the capture we're going to store our data into (no high res timer on R&S scopes)
 		AnalogWaveform* cap = new AnalogWaveform;
-		cap->m_timescale = ps_per_sample;
+		cap->m_timescale = fs_per_sample;
 		cap->m_triggerPhase = 0;
 		cap->m_startTimestamp = time(NULL);
 		double t = GetTime();
-		cap->m_startPicoseconds = (t - floor(t)) * 1e12f;
+		cap->m_startFemtoseconds = (t - floor(t)) * FS_PER_SECOND;
 
 		//Ask for the data
 		m_transport->SendCommand(m_channels[i]->GetHwname() + ":DATA?");
@@ -444,6 +539,9 @@ bool RohdeSchwarzOscilloscope::AcquireData()
 
 		//Read the actual data
 		m_transport->ReadRawData(length*sizeof(float), (unsigned char*)temp_buf);
+		//Discard trailing newline
+		m_transport->ReadRawData(1, (unsigned char*)tmp);
+
 
 		//Format the capture
 		cap->Resize(length);
@@ -460,7 +558,17 @@ bool RohdeSchwarzOscilloscope::AcquireData()
 		//Clean up
 		delete[] temp_buf;
 	}
+	if (!any_data) {
+		LogDebug("Skip update, no data from scope\n");
+		//Re-arm the trigger if not in one-shot mode
+		if(!m_triggerOneShot)
+		{
+			m_transport->SendCommand("SING");
+			m_triggerArmed = true;
+		}
 
+		return false;
+	}
 	//Now that we have all of the pending waveforms, save them in sets across all channels
 	m_pendingWaveformsMutex.lock();
 	size_t num_pending = 1;	//TODO: segmented capture support
@@ -511,6 +619,11 @@ void RohdeSchwarzOscilloscope::Stop()
 	m_transport->SendCommand("STOP");
 	m_triggerArmed = false;
 	m_triggerOneShot = true;
+}
+
+void RohdeSchwarzOscilloscope::ForceTrigger()
+{
+	LogError("RohdeSchwarzOscilloscope::ForceTrigger not implemented\n");
 }
 
 bool RohdeSchwarzOscilloscope::IsTriggerArmed()
@@ -675,9 +788,44 @@ void RohdeSchwarzOscilloscope::PushTrigger()
 /**
 	@brief Pushes settings for an edge trigger to the instrument
  */
-void RohdeSchwarzOscilloscope::PushEdgeTrigger(EdgeTrigger* /*trig*/ )
+void RohdeSchwarzOscilloscope::PushEdgeTrigger(EdgeTrigger* trig)
 {
 	lock_guard<recursive_mutex> lock(m_mutex);
+	char tmp[81];
 
-	//TODO unimplemented
+	// They use CH1, CH2 and so on here :-(
+
+	snprintf(tmp, sizeof(tmp), "TRIG:A:SOUR CH%zd", trig->GetInput(0).m_channel->GetIndex()+1);
+	m_transport->SendCommand(tmp);
+
+	snprintf(tmp, sizeof(tmp), "TRIG:A:LEV%zd %f", trig->GetInput(0).m_channel->GetIndex()+1, trig->GetLevel());
+	m_transport->SendCommand(tmp);
+
+	string slope_str;
+	switch(trig->GetType())
+	{
+		case EdgeTrigger::EDGE_RISING:
+			slope_str = "POS";
+			break;
+		case EdgeTrigger::EDGE_FALLING:
+			slope_str = "NEG";
+			break;
+		case EdgeTrigger::EDGE_ANY:
+			slope_str = "EITH";
+			break;
+		default:
+			LogDebug("Unsupported edge type: %d\n", trig->GetType());
+			return;
+	}
+	m_transport->SendCommand("TRIG:A:EDGE:SLOP " + slope_str);
 }
+
+/**
+	@brief Sends float, assumes transport is already mutexed
+ */
+
+void RohdeSchwarzOscilloscope::PushFloat(string path, float f)
+{
+	m_transport->SendCommand(path + " " + to_string_sci(f));
+}
+

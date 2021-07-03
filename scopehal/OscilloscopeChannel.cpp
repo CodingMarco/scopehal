@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -58,7 +58,7 @@ OscilloscopeChannel::OscilloscopeChannel(
 	, m_index(index)
 	, m_physical(physical)
 	, m_refcount(0)
-	, m_xAxisUnit(Unit::UNIT_PS)
+	, m_xAxisUnit(Unit::UNIT_FS)
 	, m_yAxisUnit(Unit::UNIT_VOLTS)
 {
 	SharedCtorInit();
@@ -182,6 +182,18 @@ OscilloscopeChannel::CouplingType OscilloscopeChannel::GetCoupling()
 		return OscilloscopeChannel::COUPLE_SYNTHETIC;
 }
 
+vector<OscilloscopeChannel::CouplingType> OscilloscopeChannel::GetAvailableCouplings()
+{
+	if(m_scope)
+		return m_scope->GetAvailableCouplings(m_index);
+	else
+	{
+		vector<OscilloscopeChannel::CouplingType> ret;
+		ret.push_back(COUPLE_SYNTHETIC);
+		return ret;
+	}
+}
+
 void OscilloscopeChannel::SetCoupling(CouplingType type)
 {
 	if(m_scope)
@@ -275,6 +287,56 @@ string OscilloscopeChannel::GetDisplayName()
 		return m_scope->GetChannelDisplayName(m_index);
 	else
 		return m_displayname;
+}
+
+bool OscilloscopeChannel::CanInvert()
+{
+	if(m_scope)
+		return m_scope->CanInvert(m_index);
+	else
+		return false;
+}
+
+void OscilloscopeChannel::Invert(bool invert)
+{
+	if(m_scope)
+		m_scope->Invert(m_index, invert);
+}
+
+bool OscilloscopeChannel::IsInverted()
+{
+	if(m_scope)
+		return m_scope->IsInverted(m_index);
+	else
+		return false;
+}
+
+void OscilloscopeChannel::AutoZero()
+{
+	if(m_scope)
+		m_scope->AutoZero(m_index);
+}
+
+bool OscilloscopeChannel::CanAutoZero()
+{
+	if(m_scope)
+		return m_scope->CanAutoZero(m_index);
+	else
+		return false;
+}
+
+string OscilloscopeChannel::GetProbeName()
+{
+	if(m_scope)
+		return m_scope->GetProbeName(m_index);
+	else
+		return "";
+}
+
+void OscilloscopeChannel::SetInputMux(size_t select)
+{
+	if(m_scope)
+		m_scope->SetInputMux(m_index, select);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

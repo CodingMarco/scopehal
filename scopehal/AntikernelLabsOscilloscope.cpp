@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -193,6 +193,13 @@ void AntikernelLabsOscilloscope::DisableChannel(size_t i)
 	m_transport->SendCommand(m_channels[i]->GetHwname() + ":DIS");
 }
 
+vector<OscilloscopeChannel::CouplingType> AntikernelLabsOscilloscope::GetAvailableCouplings(size_t /*i*/)
+{
+	vector<OscilloscopeChannel::CouplingType> ret;
+	ret.push_back(OscilloscopeChannel::COUPLE_DC_50);
+	return ret;
+}
+
 OscilloscopeChannel::CouplingType AntikernelLabsOscilloscope::GetChannelCoupling(size_t /*i*/)
 {
 	//All channels are 50 ohm all the time
@@ -373,7 +380,7 @@ bool AntikernelLabsOscilloscope::AcquireData()
 	cap->m_triggerPhase = 0;
 	double t = GetTime();
 	cap->m_startTimestamp = floor(t);
-	cap->m_startPicoseconds = (t - cap->m_startTimestamp) * 1e12f;
+	cap->m_startFemtoseconds = (t - cap->m_startTimestamp) * FS_PER_SECOND;
 
 	//Process the samples
 	float fullscale = GetChannelVoltageRange(0);
@@ -450,6 +457,11 @@ void AntikernelLabsOscilloscope::Stop()
 	m_triggerArmed = false;
 	m_triggerOneShot = true;
 	*/
+}
+
+void AntikernelLabsOscilloscope::ForceTrigger()
+{
+	//TODO
 }
 
 bool AntikernelLabsOscilloscope::IsTriggerArmed()

@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -83,6 +83,7 @@ public:
 	virtual void DisableChannel(size_t i);
 	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i);
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type);
+	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings(size_t i);
 	virtual double GetChannelAttenuation(size_t i);
 	virtual void SetChannelAttenuation(size_t i, double atten);
 	virtual int GetChannelBandwidthLimit(size_t i);
@@ -95,6 +96,16 @@ public:
 	virtual std::string GetChannelDisplayName(size_t i);
 	virtual void SetChannelDisplayName(size_t i, std::string name);
 	virtual std::vector<unsigned int> GetChannelBandwidthLimiters(size_t i);
+	virtual bool CanInvert(size_t i);
+	virtual void Invert(size_t i, bool invert);
+	virtual bool IsInverted(size_t i);
+	virtual bool CanAutoZero(size_t i);
+	virtual void AutoZero(size_t i);
+	virtual std::string GetProbeName(size_t i);
+	virtual bool HasInputMux(size_t i);
+	virtual size_t GetInputMuxSetting(size_t i);
+	virtual std::vector<std::string> GetInputMuxNames(size_t i);
+	virtual void SetInputMux(size_t i, size_t select);
 
 	//Triggering
 	virtual Oscilloscope::TriggerMode PollTrigger();
@@ -102,6 +113,7 @@ public:
 	virtual void Start();
 	virtual void StartSingleTrigger();
 	virtual void Stop();
+	virtual void ForceTrigger();
 	virtual bool IsTriggerArmed();
 	virtual void PushTrigger();
 	virtual void PullTrigger();
@@ -158,6 +170,9 @@ public:
 
 		MODEL_SDA_3K,
 
+		MODEL_SDA_8ZI,
+		MODEL_SDA_8ZI_A,
+		MODEL_SDA_8ZI_B,
 		MODEL_WAVEMASTER_8ZI_B,
 
 		MODEL_WAVEPRO_HD,
@@ -167,8 +182,6 @@ public:
 		MODEL_WAVERUNNER_9K,
 
 		MODEL_WAVESURFER_3K,
-
-		MODEL_SIGLENT_SDS2000X,
 
 		MODEL_UNKNOWN
 	};
@@ -189,6 +202,9 @@ public:
 	virtual void SetUseExternalRefclk(bool external);
 	virtual bool IsInterleaving();
 	virtual bool SetInterleaving(bool combine);
+	virtual bool IsSamplingModeAvailable(SamplingMode mode);
+	virtual SamplingMode GetSamplingMode();
+	virtual void SetSamplingMode(SamplingMode mode);
 
 	virtual void SetTriggerOffset(int64_t offset);
 	virtual int64_t GetTriggerOffset();
@@ -265,12 +281,7 @@ protected:
 		double basetime,
 		double* wavetime
 		);
-	std::map<int, DigitalWaveform*> ProcessDigitalWaveform(std::string& data);
-
-	void Convert8BitSamples(
-		int64_t* offs, int64_t* durs, float* pout, int8_t* pin, float gain, float offset, size_t count, int64_t ibase);
-	void Convert8BitSamplesAVX2(
-		int64_t* offs, int64_t* durs, float* pout, int8_t* pin, float gain, float offset, size_t count, int64_t ibase);
+	std::map<int, DigitalWaveform*> ProcessDigitalWaveform(std::string& data, int64_t analog_hoff);
 
 	//hardware analog channel count, independent of LA option etc
 	unsigned int m_analogChannelCount;
@@ -288,6 +299,7 @@ protected:
 	bool m_hasI2cTrigger;
 	bool m_hasSpiTrigger;
 	bool m_hasUartTrigger;
+	bool m_hasSerdesTrigger;
 
 	///Maximum bandwidth we support, in MHz
 	unsigned int m_maxBandwidth;
@@ -310,6 +322,7 @@ protected:
 	bool m_interleavingValid;
 	Multimeter::MeasurementTypes m_meterMode;
 	bool m_meterModeValid;
+	std::map<size_t, bool> m_probeIsActive;
 
 	//True if we have >8 bit capture depth
 	bool m_highDefinition;

@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -41,7 +41,7 @@ DramRefreshActivateMeasurement::DramRefreshActivateMeasurement(const string& col
 	//Set up channels
 	CreateInput("din");
 
-	m_yAxisUnit = Unit(Unit::UNIT_PS);
+	m_yAxisUnit = Unit(Unit::UNIT_FS);
 
 	m_midpoint = 0;
 	m_range = 1;
@@ -55,7 +55,7 @@ bool DramRefreshActivateMeasurement::ValidateChannel(size_t i, StreamDescriptor 
 	if(stream.m_channel == NULL)
 		return false;
 
-	if( (i == 0) && (dynamic_cast<DDR3Waveform*>(stream.m_channel->GetData(stream.m_stream)) != NULL ) )
+	if( (i == 0) && (dynamic_cast<SDRAMWaveform*>(stream.m_channel->GetData(stream.m_stream)) != NULL ) )
 		return true;
 
 	return false;
@@ -110,7 +110,7 @@ void DramRefreshActivateMeasurement::Refresh()
 	}
 
 	//Get the input data
-	auto din = dynamic_cast<DDR3Waveform*>(GetInputWaveform(0));
+	auto din = dynamic_cast<SDRAMWaveform*>(GetInputWaveform(0));
 
 	//Create the output
 	auto cap = new AnalogWaveform;
@@ -133,11 +133,11 @@ void DramRefreshActivateMeasurement::Refresh()
 			continue;
 
 		//If it's a refresh, update the last refresh time
-		if(sample.m_stype == DDR3Symbol::TYPE_REF)
+		if(sample.m_stype == SDRAMSymbol::TYPE_REF)
 			lastRef[sample.m_bank] = din->m_offsets[i] * din->m_timescale;
 
 		//If it's an activate, measure the latency
-		else if(sample.m_stype == DDR3Symbol::TYPE_ACT)
+		else if(sample.m_stype == SDRAMSymbol::TYPE_ACT)
 		{
 			int64_t tact = din->m_offsets[i] * din->m_timescale;
 
@@ -177,8 +177,8 @@ void DramRefreshActivateMeasurement::Refresh()
 
 	SetData(cap, 0);
 
-	//Copy start time etc from the input. Timestamps are in picoseconds.
+	//Copy start time etc from the input. Timestamps are in femtoseconds.
 	cap->m_timescale = 1;
 	cap->m_startTimestamp = din->m_startTimestamp;
-	cap->m_startPicoseconds = din->m_startPicoseconds;
+	cap->m_startFemtoseconds = din->m_startFemtoseconds;
 }

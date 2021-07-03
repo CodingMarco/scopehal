@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg, Mike Walters                                                            *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -30,7 +30,9 @@
 #ifndef AgilentOscilloscope_h
 #define AgilentOscilloscope_h
 
-class EdgeTrigger;
+#include "EdgeTrigger.h"
+#include "PulseWidthTrigger.h"
+#include "NthEdgeBurstTrigger.h"
 
 class AgilentOscilloscope : public SCPIOscilloscope
 {
@@ -55,6 +57,7 @@ public:
 	virtual void DisableChannel(size_t i);
 	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i);
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type);
+	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings(size_t i);
 	virtual double GetChannelAttenuation(size_t i);
 	virtual void SetChannelAttenuation(size_t i, double atten);
 	virtual int GetChannelBandwidthLimit(size_t i);
@@ -71,6 +74,7 @@ public:
 	virtual void Start();
 	virtual void StartSingleTrigger();
 	virtual void Stop();
+	virtual void ForceTrigger();
 	virtual bool IsTriggerArmed();
 	virtual void PushTrigger();
 	virtual void PullTrigger();
@@ -99,6 +103,12 @@ protected:
 	//hardware analog channel count, independent of LA option etc
 	unsigned int m_analogChannelCount;
 
+	enum ProbeType {
+		None,
+		AutoProbe,
+		SmartProbe,
+	};
+
 	//config cache
 	std::map<size_t, double> m_channelOffsets;
 	std::map<size_t, double> m_channelVoltageRanges;
@@ -106,12 +116,38 @@ protected:
 	std::map<size_t, double> m_channelAttenuations;
 	std::map<size_t, int> m_channelBandwidthLimits;
 	std::map<int, bool> m_channelsEnabled;
+	std::map<size_t, ProbeType> m_probeTypes;
+
+	bool m_sampleDepthValid;
+	uint64_t m_sampleDepth;
+	bool m_sampleRateValid;
+	uint64_t m_sampleRate;
 
 	bool m_triggerArmed;
 	bool m_triggerOneShot;
 
 	void PullEdgeTrigger();
+	void PullNthEdgeBurstTrigger();
+	void PullPulseWidthTrigger();
+
+	void GetTriggerSlope(EdgeTrigger* trig, std::string reply);
+	void GetTriggerSlope(NthEdgeBurstTrigger* trig, std::string reply);
+	Trigger::Condition GetCondition(std::string reply);
+	void GetProbeType(size_t i);
+
 	void PushEdgeTrigger(EdgeTrigger* trig);
+	void PushNthEdgeBurstTrigger(NthEdgeBurstTrigger* trig);
+	void PushPulseWidthTrigger(PulseWidthTrigger* trig);
+	void PushCondition(std::string path, Trigger::Condition cond);
+	void PushFloat(std::string path, float f);
+	void PushSlope(std::string path, EdgeTrigger::EdgeType slope);
+	void PushSlope(std::string path, NthEdgeBurstTrigger::EdgeType slope);
+
+private:
+	static std::map<uint64_t, uint64_t> m_sampleRateToDuration;
+
+	void SetSampleRateAndDepth(uint64_t rate, uint64_t depth);
+
 
 public:
 	static std::string GetDriverNameInternal();

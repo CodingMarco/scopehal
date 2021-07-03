@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -56,6 +56,12 @@ EyeMask::~EyeMask()
 
 bool EyeMask::Load(string path)
 {
+	//Clear out any previous state
+	m_polygons.clear();
+	m_hitrate = 0;
+	m_timebaseIsRelative = false;
+	m_maskname = "";
+
 	try
 	{
 		m_fname = path;
@@ -96,6 +102,7 @@ bool EyeMask::Load(const YAML::Node& node)
 	//Load units
 	auto units = node["units"];
 	float yscale = 1;
+	float timebaseScale = 1;
 	for(auto it : units)
 	{
 		auto name = it.first.as<string>();
@@ -105,6 +112,11 @@ bool EyeMask::Load(const YAML::Node& node)
 			if(scale == "ui")
 				m_timebaseIsRelative = true;
 			else if(scale == "ps")
+			{
+				m_timebaseIsRelative = false;
+				timebaseScale = 1000;
+			}
+			else if(scale == "fs")
 				m_timebaseIsRelative = false;
 			else
 				LogError("Unrecognized xscale \"%s\"\n", scale.c_str());
@@ -138,7 +150,7 @@ bool EyeMask::Load(const YAML::Node& node)
 
 		auto points = p["points"];
 		for(auto v : points)
-			poly.m_points.push_back(EyeMaskPoint(v["x"].as<float>(), v["y"].as<float>() * yscale));
+			poly.m_points.push_back(EyeMaskPoint(v["x"].as<float>() * timebaseScale, v["y"].as<float>() * yscale));
 
 		m_polygons.push_back(poly);
 	}

@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -42,6 +42,8 @@ public:
 
 	virtual void Refresh();
 
+	virtual void ClearSweeps();
+
 	virtual bool NeedsConfig();
 	virtual bool IsOverlay();
 
@@ -49,13 +51,20 @@ public:
 	virtual void SetDefaultName();
 
 	virtual double GetVoltageRange();
+	virtual double GetOffset();
 
 	virtual bool ValidateChannel(size_t i, StreamDescriptor stream);
 
 	PROTOCOL_DECODER_INITPROC(TIEMeasurement)
 
 protected:
-	double m_maxTie;
+	float m_min;
+	float m_max;
+	float m_range;
+	float m_offset;
+
+	std::string m_threshname;
+	std::string m_skipname;
 };
 
 #endif

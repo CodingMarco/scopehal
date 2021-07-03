@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -83,6 +83,7 @@ public:
 	virtual void DisableChannel(size_t i);
 	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i);
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type);
+	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings(size_t i);
 	virtual double GetChannelAttenuation(size_t i);
 	virtual void SetChannelAttenuation(size_t i, double atten);
 	virtual int GetChannelBandwidthLimit(size_t i);
@@ -98,10 +99,12 @@ public:
 
 	//Triggering
 	virtual Oscilloscope::TriggerMode PollTrigger();
+	virtual bool PeekTriggerArmed();
 	virtual bool AcquireData();
 	virtual void Start();
 	virtual void StartSingleTrigger();
 	virtual void Stop();
+	virtual void ForceTrigger();
 	virtual bool IsTriggerArmed();
 	virtual void PushTrigger();
 	virtual void PullTrigger();
@@ -123,6 +126,9 @@ public:
 
 	virtual void SetDeskewForChannel(size_t channel, int64_t skew);
 	virtual int64_t GetDeskewForChannel(size_t channel);
+
+	virtual void SetUseExternalRefclk(bool external);
+	virtual void EnableTriggerOutput();
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Logic analyzer configuration
@@ -169,7 +175,6 @@ protected:
 
 	//acquisition
 	bool AcquireDataMSO56(std::map<int, std::vector<WaveformBase*> >& pending_waveforms);
-
 	void DetectProbes();
 
 	//Mutexing for thread safety
@@ -236,6 +241,9 @@ protected:
 	void PullWindowTrigger();
 	void PushWindowTrigger(WindowTrigger* trig);
 
+	float ReadTriggerLevelMSO56(OscilloscopeChannel* chan);
+	void SetTriggerLevelMSO56(Trigger* trig);
+
 	//Helpers for figuring out type of a channel by the index
 	bool IsAnalog(size_t index)
 	{ return index < m_analogChannelCount; }
@@ -270,6 +278,24 @@ protected:
 
 	//Installed software options
 	bool m_hasDVM;
+
+	/**
+		@brief True if this channel's status has changed (on/off) since the last time the trigger was armed
+
+		This is needed to work around a bug in the MSO64 SCPI stack.
+
+		Per 5/6 series programmer manual for DAT:SOU:AVAIL?:
+
+			"This query returns a list of enumerations representing the source waveforms that currently available for
+			:CURVe? queries. This means that the waveforms have been acquired. If there are none, NONE is returned."
+
+		This is untrue. In reality it returns whether the channel is *currently* enabled. If a channel is enabled after
+		the trigger event, DAT:SOU:AVAIL? will report the channel as available, however CURV? queries will silently
+		fail and return no data.
+	*/
+	std::set<size_t> m_channelEnableStatusDirty;
+	bool IsEnableStateDirty(size_t chan);
+	void FlushChannelEnableStates();
 
 public:
 	static std::string GetDriverNameInternal();

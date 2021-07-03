@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -60,6 +60,7 @@ public:
 	virtual void DisableChannel(size_t i);
 	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i);
 	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type);
+	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings(size_t i);
 	virtual double GetChannelAttenuation(size_t i);
 	virtual void SetChannelAttenuation(size_t i, double atten);
 	virtual int GetChannelBandwidthLimit(size_t i);
@@ -76,6 +77,7 @@ public:
 	virtual void Start();
 	virtual void StartSingleTrigger();
 	virtual void Stop();
+	virtual void ForceTrigger();
 	virtual bool IsTriggerArmed();
 	virtual void PushTrigger();
 	virtual void PullTrigger();
@@ -94,6 +96,13 @@ public:
 	virtual bool IsInterleaving();
 	virtual bool SetInterleaving(bool combine);
 
+	virtual bool IsADCModeConfigurable();
+	virtual std::vector<std::string> GetADCModeNames(size_t channel);
+	virtual size_t GetADCMode(size_t channel);
+	virtual void SetADCMode(size_t channel, size_t mode);
+	virtual std::vector<AnalogBank> GetAnalogBanks();
+	virtual AnalogBank GetAnalogBank(size_t channel);
+
 	virtual unsigned int GetInstrumentTypes();
 	virtual void LoadConfiguration(const YAML::Node& node, IDTable& idmap);
 
@@ -107,6 +116,14 @@ protected:
 	std::map<size_t, unsigned int> m_channelBandwidth;
 	std::map<size_t, double> m_channelVoltageRange;
 	std::map<size_t, double> m_channelOffset;
+	std::map<size_t, size_t> m_channelModes;
+
+	enum ChannelModes
+	{
+		CHANNEL_MODE_IDEAL,
+		CHANNEL_MODE_NOISE,
+		CHANNEL_MODE_NOISE_LPF
+	};
 
 	bool m_triggerArmed;
 	bool m_triggerOneShot;
@@ -117,9 +134,8 @@ protected:
 	size_t m_rate;
 
 	std::random_device m_rd;
-	std::mt19937 m_rng;
-
-	TestWaveformSource m_source;
+	std::minstd_rand* m_rng[5];
+	TestWaveformSource* m_source[5];
 
 public:
 	static std::string GetDriverNameInternal();

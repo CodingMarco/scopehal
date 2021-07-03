@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -43,6 +43,8 @@
 #undef PARITY_NONE
 #undef PARITY_ODD
 #undef PARITY_EVEN
+#undef PARITY_MARK
+#undef PARITY_SPACE
 #endif
 
 /**
@@ -58,7 +60,9 @@ public:
 	{
 		PARITY_NONE,
 		PARITY_ODD,
-		PARITY_EVEN
+		PARITY_EVEN,
+                PARITY_MARK,
+                PARITY_SPACE
 	};
 
 	void SetParityType(ParityType type)
@@ -70,7 +74,9 @@ public:
 	enum MatchType
 	{
 		TYPE_DATA,
-		TYPE_PARITY_ERR
+		TYPE_PARITY_ERR,
+                TYPE_START,
+                TYPE_STOP
 	};
 
 	void SetMatchType(MatchType type)

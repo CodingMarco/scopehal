@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopeprotocols                                                                                                    *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -36,53 +36,14 @@
 #ifndef DDR3Decoder_h
 #define DDR3Decoder_h
 
-class DDR3Symbol
-{
-public:
-	enum stype
-	{
-		TYPE_MRS,
-		TYPE_REF,
-		TYPE_PRE,
-		TYPE_PREA,
-		TYPE_ACT,
-		TYPE_WR,
-		TYPE_WRA,
-		TYPE_RD,
-		TYPE_RDA,
+#include "SDRAMDecoderBase.h"
 
-		TYPE_ERROR
-	};
-
-	DDR3Symbol()
-	{}
-
-	DDR3Symbol(stype t, int bank = 0)
-	 : m_stype(t)
-	 , m_bank(bank)
-	{}
-
-	stype m_stype;
-	int m_bank;
-
-	bool operator== (const DDR3Symbol& s) const
-	{
-		return (m_stype == s.m_stype) && (m_bank == s.m_bank);
-	}
-};
-
-typedef Waveform<DDR3Symbol> DDR3Waveform;
-
-class DDR3Decoder : public Filter
+class DDR3Decoder : public SDRAMDecoderBase
 {
 public:
 	DDR3Decoder(const std::string& color);
 
-	virtual std::string GetText(int i);
-	virtual Gdk::Color GetColor(int i);
-
 	virtual void Refresh();
-	virtual bool NeedsConfig();
 
 	static std::string GetProtocolName();
 	virtual void SetDefaultName();

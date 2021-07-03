@@ -1,8 +1,8 @@
 /***********************************************************************************************************************
 *                                                                                                                      *
-* ANTIKERNEL v0.1                                                                                                      *
+* libscopehal v0.1                                                                                                     *
 *                                                                                                                      *
-* Copyright (c) 2012-2020 Andrew D. Zonenberg                                                                          *
+* Copyright (c) 2012-2021 Andrew D. Zonenberg and contributors                                                         *
 * All rights reserved.                                                                                                 *
 *                                                                                                                      *
 * Redistribution and use in source and binary forms, with or without modification, are permitted provided that the     *
@@ -36,6 +36,8 @@
 #ifndef scopehal_h
 #define scopehal_h
 
+#define __USE_MINGW_ANSI_STDIO 1 // Required for MSYS2 mingw64 to support format "%z" ..
+
 #include <vector>
 #include <string>
 #include <map>
@@ -50,6 +52,21 @@
 
 #include "../log/log.h"
 #include "../graphwidget/Graph.h"
+
+#include "config.h"
+#ifdef HAVE_OPENCL
+#define CL_TARGET_OPENCL_VERSION 120
+#define CL_HPP_MINIMUM_OPENCL_VERSION CL_TARGET_OPENCL_VERSION
+#define CL_HPP_TARGET_OPENCL_VERSION CL_TARGET_OPENCL_VERSION
+#define CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY
+#define CL_HPP_ENABLE_EXCEPTIONS
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#pragma GCC diagnostic ignored "-Wignored-attributes"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#include <CL/opencl.hpp>
+#pragma GCC diagnostic pop
+#endif
 
 #include "Unit.h"
 #include "Bijection.h"
@@ -94,26 +111,52 @@ std::string Trim(const std::string& str);
 std::string TrimQuotes(const std::string& str);
 std::string BaseName(const std::string& path);
 
+std::string ReadFile(const std::string& path);
+std::string ReadDataFile(const std::string& relpath);
+std::string FindDataFile(const std::string& relpath);
+
 std::string to_string_sci(double d);
+std::string to_string_hex(uint64_t n, bool zeropad = false, int len = 0);
 
 void TransportStaticInit();
 void DriverStaticInit();
 
+void InitializeSearchPaths();
 void InitializePlugins();
 void DetectCPUFeatures();
+void DetectGPUFeatures();
+
+void ScopehalStaticCleanup();
 
 float FreqToPhase(float hz);
 
+uint64_t next_pow2(uint64_t v);
+
+extern bool g_hasFMA;
 extern bool g_hasAvx512F;
 extern bool g_hasAvx512VL;
 extern bool g_hasAvx512DQ;
 extern bool g_hasAvx2;
+
+#define FS_PER_SECOND 1e15
+#define SECONDS_PER_FS 1e-15
 
 //string to size_t conversion
 #ifdef _WIN32
 #define stos(str) static_cast<size_t>(stoll(str))
 #else
 #define stos(str) static_cast<size_t>(stol(str))
+#endif
+
+extern std::vector<std::string> g_searchPaths;
+
+//Set true prior to calling DetectGPUFeatures() to force OpenCL to not be used
+extern bool g_disableOpenCL;
+
+#ifdef HAVE_OPENCL
+extern cl::Context* g_clContext;
+extern std::vector<cl::Device> g_contextDevices;
+extern size_t g_maxClLocalSizeX;
 #endif
 
 #endif
