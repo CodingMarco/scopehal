@@ -276,6 +276,9 @@ protected:
 	///@brief Hardware analog channel count, independent of LA option etc
 	unsigned int m_analogChannelCount;
 
+	///@brief Hardware RF / Spectrum channel count
+	unsigned int m_spectrumChannelCount;
+
 	///@brief Type of probe connected to a hardware channel
 	enum ProbeType
 	{
@@ -413,7 +416,7 @@ protected:
 	{
 		if(index < m_digitalChannelBase)
 			return false;
-		if(index >= (m_digitalChannelBase + 8*m_analogChannelCount) )
+		if(index >= (m_digitalChannelBase + m_digitalChannelCount) )
 			return false;
 		return true;
 	}
@@ -429,7 +432,7 @@ protected:
 	{
 		if(index < m_spectrumChannelBase)
 			return false;
-		if(index >= (m_spectrumChannelBase + m_analogChannelCount) )
+		if(index >= (m_spectrumChannelBase + m_spectrumChannelCount) )
 			return false;
 		return true;
 	}

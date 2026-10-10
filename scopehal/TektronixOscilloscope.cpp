@@ -193,25 +193,29 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 
 	//Add spectrum view channels
 	m_spectrumChannelBase = m_channels.size();
-	//TODO NICK:
+
 	switch(m_family)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-			for(size_t i=0; i<m_analogChannelCount; i++)
-			{
-				m_channels.push_back(
-					new SpectrumChannel(
-					this,
-					string("CH") + to_string(i+1) + "_SPECTRUM",
-					GetOscilloscopeChannel(i)->m_displaycolor,
-					m_channels.size()));
-			}
+			m_spectrumChannelCount = m_analogChannelCount;
 			break;
-
+		case FAMILY_MDO4:
+			m_spectrumChannelCount = 1;
+			break;
 		default:
 			//no spectrum view
 			break;
+	}
+
+	for(size_t i=0; i<m_spectrumChannelCount; i++)
+	{
+		m_channels.push_back(
+			new SpectrumChannel(
+			this,
+			string("CH") + to_string(i+1) + "_SPECTRUM",
+			GetOscilloscopeChannel(i)->m_displaycolor,
+			m_channels.size()));
 	}
 
 	//Add all possible digital channels
@@ -220,8 +224,7 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-		case FAMILY_MDO4:
-			for(size_t i=0; i<m_analogChannelCount; i++)
+			for(size_t i=0; i<m_digitalChannelCount; i++)
 			{
 				for(size_t j=0; j<8; j++)
 				{
@@ -241,6 +244,9 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 					m_digitalChannelCount++;
 				}
 			}
+			break;
+		case FAMILY_MDO4:
+			// Leave 0 digital channels
 			break;
 
 		default:
@@ -283,35 +289,49 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 			break;
 	}
 
-	string reply = m_transport->SendCommandQueuedWithReply("LICENSE:APPID?", false);
-	reply = reply.substr(1, reply.size() - 2); // Chop off quotes
-	vector<string> apps;
-	stringstream s_stream(reply);
-	while(s_stream.good())
+	switch(m_family)
 	{
-		string substr;
-		getline(s_stream, substr, ',');
-		apps.push_back(substr);
-	}
+		case FAMILY_MSO5:
+		case FAMILY_MSO6:
+		{
+			string reply = m_transport->SendCommandQueuedWithReply("LICENSE:APPID?", false);
+			reply = reply.substr(1, reply.size() - 2); // Chop off quotes
+			vector<string> apps;
+			stringstream s_stream(reply);
+			while(s_stream.good())
+			{
+				string substr;
+				getline(s_stream, substr, ',');
+				apps.push_back(substr);
+			}
 
-	for (auto& app : apps)
-	{
-		if (app == "DVM")
-		{
-			m_hasDVM = true;
-			LogDebug(" * Tek has DVM\n");
-		}
-		else if (app == "AFG")
-		{
-			m_hasAFG = true;
-			LogDebug(" * Tek has AFG\n");
-		}
-		else
-		{
-			LogDebug("(* Tek also has '%s' (ignored))\n", app.c_str());
-		}
+			for (auto& app : apps)
+			{
+				if (app == "DVM")
+				{
+					m_hasDVM = true;
+					LogDebug(" * Tek has DVM\n");
+				}
+				else if (app == "AFG")
+				{
+					m_hasAFG = true;
+					LogDebug(" * Tek has AFG\n");
+				}
+				else
+				{
+					LogDebug("(* Tek also has '%s' (ignored))\n", app.c_str());
+				}
 
-		// Bandwidth expanding options reflected in earlier query for max B/W
+				// Bandwidth expanding options reflected in earlier query for max B/W
+			}
+
+			break;
+		}
+		case FAMILY_MDO4:
+			// Has neither AFG nor DVM and doesn't support "LICENSE:APPID?"
+			break;
+		default:
+			break;
 	}
 
 	//Add AWG channel
@@ -391,7 +411,6 @@ void TektronixOscilloscope::DetectProbes()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-		case FAMILY_MDO4:
 
 			//Figure out what kind of probe is attached (analog or digital).
 			//If a digital probe (TLP058), disable this channel and mark as not usable
@@ -424,6 +443,27 @@ void TektronixOscilloscope::DetectProbes()
 				}
 			}
 			break;
+
+		case FAMILY_MDO4:
+		{
+			for(size_t i=0; i<m_analogChannelCount; i++)
+			{
+				string id = TrimQuotes(m_transport->SendCommandQueuedWithReply(
+					GetOscilloscopeChannel(i)->GetHwname() + ":PROBE:ID:TYP?"));
+
+				lock_guard<recursive_mutex> lock(m_cacheMutex);
+				m_probeNames[i] = id;
+
+				if(id == "TPP0500B")
+					m_probeTypes[i] = PROBE_TYPE_ANALOG_250K;
+				else if(id.find("TCP") == 0)
+					m_probeTypes[i] = PROBE_TYPE_ANALOG_CURRENT;
+				else
+					m_probeTypes[i] = PROBE_TYPE_ANALOG;
+			}
+
+			break;
+		}
 
 		default:
 			break;
@@ -526,8 +566,6 @@ bool TektronixOscilloscope::IsChannelEnabled(size_t i)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-		case FAMILY_MDO4:
-
 			//Undocumented command to toggle spectrum view state
 			if(IsSpectrum(i))
 			{
@@ -545,6 +583,33 @@ bool TektronixOscilloscope::IsChannelEnabled(size_t i)
 					//  view is not enabled. Especially relevant after doing File -> Default Setup
 					string dall_reply = m_transport->SendCommandQueuedWithReply(
 						string("DISP:WAVEV:") + m_channels[m_flexChannelParents[ochan]]->GetHwname() + "_DALL:STATE?");
+
+					if (dall_reply == "0")
+					{
+						reply = "0";
+					}
+				}
+			}
+			break;
+
+		case FAMILY_MDO4:
+
+			//Undocumented command to toggle spectrum view state
+			if(IsSpectrum(i))
+			{
+				reply = m_transport->SendCommandQueuedWithReply("SELect:RF_NORMal?");
+			}
+			else
+			{
+				reply = m_transport->SendCommandQueuedWithReply(
+					string("SEL:") + ochan->GetHwname() + "?");
+
+				if (IsDigital(i))
+				{
+					// Digital channels may report enabled, but not actually be displayed because the associated _DALL
+					//  view is not enabled. Especially relevant after doing File -> Default Setup
+					string dall_reply = m_transport->SendCommandQueuedWithReply(
+						string("SEL:") + m_channels[m_flexChannelParents[ochan]]->GetHwname() + "?");
 
 					if (dall_reply == "0")
 					{
@@ -870,7 +935,6 @@ double TektronixOscilloscope::GetChannelAttenuation(size_t i)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-		case FAMILY_MDO4:
 			{
 				float probegain = stof(
 					m_transport->SendCommandQueuedWithReply(GetOscilloscopeChannel(i)->GetHwname() + ":PRO:GAIN?"));
@@ -884,7 +948,18 @@ double TektronixOscilloscope::GetChannelAttenuation(size_t i)
 				return atten;
 			}
 			break;
+		case FAMILY_MDO4:
+			{
+				float probegain = stof(
+					m_transport->SendCommandQueuedWithReply(GetOscilloscopeChannel(i)->GetHwname() + ":PRO:GAIN?"));
 
+				//Calculate the overall system attenuation.
+				//Note that probes report *gain* while the external is *attenuation*.
+				double atten = 1.0 / probegain;
+				m_channelAttenuations[i] = atten;
+				return atten;
+			}
+			break;
 		default:
 			// FIXME
 
@@ -1117,7 +1192,6 @@ float TektronixOscilloscope::GetChannelVoltageRange(size_t i, size_t /*stream*/)
 		{
 			case FAMILY_MSO5:
 			case FAMILY_MSO6:
-			case FAMILY_MDO4:
 				if(IsSpectrum(i))
 				{
 					range = 10 * stof(m_transport->SendCommandQueuedWithReply(
@@ -1128,6 +1202,10 @@ float TektronixOscilloscope::GetChannelVoltageRange(size_t i, size_t /*stream*/)
 					range = 10 * stof(m_transport->SendCommandQueuedWithReply(
 						GetOscilloscopeChannel(i)->GetHwname() + ":SCA?"));
 				}
+				break;
+			case FAMILY_MDO4:
+				range = 10 * stof(m_transport->SendCommandQueuedWithReply(
+					GetOscilloscopeChannel(i)->GetHwname() + ":SCA?"));
 				break;
 
 			default:
@@ -1160,7 +1238,6 @@ void TektronixOscilloscope::SetChannelVoltageRange(size_t i, size_t stream, floa
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-		case FAMILY_MDO4:
 			if(IsSpectrum(i))
 			{
 				float divsize = range/10;
@@ -1174,6 +1251,10 @@ void TektronixOscilloscope::SetChannelVoltageRange(size_t i, size_t stream, floa
 					":VERT:POS " + to_string(offset_div));
 			}
 			else
+				m_transport->SendCommandQueued(GetOscilloscopeChannel(i)->GetHwname() + ":SCA " + to_string(range/10));
+			break;
+		case FAMILY_MDO4:
+			if (!IsSpectrum(i))
 				m_transport->SendCommandQueued(GetOscilloscopeChannel(i)->GetHwname() + ":SCA " + to_string(range/10));
 			break;
 
@@ -1372,7 +1453,6 @@ float TektronixOscilloscope::GetChannelOffset(size_t i, size_t stream)
 		{
 			case FAMILY_MSO5:
 			case FAMILY_MSO6:
-			case FAMILY_MDO4:
 				if(IsSpectrum(i))
 				{
 					//Position is reported in divisions, not dBm.
@@ -1383,6 +1463,13 @@ float TektronixOscilloscope::GetChannelOffset(size_t i, size_t stream)
 				}
 				else
 					offset = -stof(m_transport->SendCommandQueuedWithReply(GetOscilloscopeChannel(i)->GetHwname() + ":OFFS?"));
+				break;
+
+			case FAMILY_MDO4:
+				if(!IsSpectrum(i))
+				{
+					offset = -stof(m_transport->SendCommandQueuedWithReply(GetOscilloscopeChannel(i)->GetHwname() + ":OFFS?"));
+				}
 				break;
 
 			default:
@@ -1416,7 +1503,6 @@ void TektronixOscilloscope::SetChannelOffset(size_t i, size_t stream, float offs
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-		case FAMILY_MDO4:
 			if(IsSpectrum(i))
 			{
 				float divsize = GetChannelVoltageRange(i, stream) / 10;
@@ -1428,6 +1514,13 @@ void TektronixOscilloscope::SetChannelOffset(size_t i, size_t stream, float offs
 			}
 			else
 				m_transport->SendCommandQueued(GetOscilloscopeChannel(i)->GetHwname() + ":OFFS " + to_string(-offset));
+			break;
+
+		case FAMILY_MDO4:
+			if(!IsSpectrum(i))
+			{
+				m_transport->SendCommandQueued(GetOscilloscopeChannel(i)->GetHwname() + ":OFFS " + to_string(-offset));
+			}
 			break;
 
 		default:
@@ -1736,7 +1829,7 @@ void TektronixOscilloscope::ResynchronizeSCPI()
 		if(prbs3[i])
 			reply = m_transport->SendCommandQueuedWithReply("*IDN?");	//should return a string starting with "TEKTRONIX"
 		else
-			reply = m_transport->SendCommandQueuedWithReply("HOR:MODE:RECO?");	//should return a number
+			reply = m_transport->SendCommandQueuedWithReply("ID?");	//should return a string starting with "ID TEK"
 
 		if(reply.find("TEKTRONIX") != string::npos)
 			replies[i] = 1;
