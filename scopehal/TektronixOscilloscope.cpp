@@ -37,6 +37,7 @@
 
 #include "scopehal.h"
 #include "TektronixOscilloscope.h"
+#include <regex>
 #include "EdgeTrigger.h"
 #include "PulseWidthTrigger.h"
 #include "DropoutTrigger.h"
@@ -97,20 +98,23 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 		m_family = FAMILY_MSO5;
 	else if(m_model.find("MSO6") == 0)
 		m_family = FAMILY_MSO6;
+	else if(m_model.find("MDO4") == 0)
+		m_family = FAMILY_MDO4;
 	else
 		m_family = FAMILY_UNKNOWN;
 
-	//Last digit of the model number is the number of channels
+	//The number of channels is unique to each model
+	//The correct way to do this would be to have a lookup table that matches each model to the supported
+	//number of channels.
+	//Previously we'd do digits-in-model_string % 10. This may be true for some models, but for models like
+	//MDO4104B-3 this would return 3 channels (as this is the last digit), but it is a 4 channel scope.
 	string model_number = m_model;
-	model_number.erase(
-		std::remove_if(
-			model_number.begin(),
-			model_number.end(),
-			[]( char const& c ) -> bool { return !std::isdigit(c); }
-		),
-		model_number.end()
-	);
-	int nchans = stoi(model_number) % 10;
+
+	std::smatch m;
+	std::regex r("\\d{3}(\\d)");
+	int nchans = 0;
+	if(std::regex_search(model_number, m, r))
+		nchans = stoi(m[1].str());
 
 	// No header in the reply of queries
 	m_transport->SendCommandQueued("HEAD 0");
@@ -120,6 +124,7 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			m_transport->SendCommandQueued("ACQ:MOD SAM");				//actual sampled data, no averaging etc
 			m_transport->SendCommandQueued("VERB OFF");					//Disable verbose mode (send shorter commands)
 			m_transport->SendCommandQueued("ACQ:STOPA SEQ");			//Stop after acquiring a single waveform
@@ -148,6 +153,7 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 	                                                                                //picked from a remoting screenshot,
 	                                                                                //seems like they might be a little dim
 	const char* colors_mso6[4] = { "#ffff00", "#20d3d8", "#f23f59", "#f16727" };	//yellow-cyan-pink-orange
+	const char* colors_mdo4[4] = { "#ffff00", "#00e7e7", "#a500a5", "#00a600" };	//yellow-cyan-pink-green
 
 	for(int i=0; i<nchans; i++)
 	{
@@ -161,6 +167,10 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 
 			case FAMILY_MSO6:
 				color = colors_mso6[i % 4];
+				break;
+
+			case FAMILY_MDO4:
+				color = colors_mdo4[i % 4];
 				break;
 
 			default:
@@ -183,6 +193,7 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 
 	//Add spectrum view channels
 	m_spectrumChannelBase = m_channels.size();
+	//TODO NICK:
 	switch(m_family)
 	{
 		case FAMILY_MSO5:
@@ -209,6 +220,7 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			for(size_t i=0; i<m_analogChannelCount; i++)
 			{
 				for(size_t j=0; j<8; j++)
@@ -236,6 +248,7 @@ TektronixOscilloscope::TektronixOscilloscope(SCPITransport* transport)
 	}
 
 	//Add the external trigger input
+	//TODO NICK: EXTERNAL TRIGGER MAY BE ONE OF THE ANALOG INS
 	switch(m_family)
 	{
 		//MSO5 does not appear to have an external trigger input
@@ -378,6 +391,7 @@ void TektronixOscilloscope::DetectProbes()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 
 			//Figure out what kind of probe is attached (analog or digital).
 			//If a digital probe (TLP058), disable this channel and mark as not usable
@@ -512,6 +526,7 @@ bool TektronixOscilloscope::IsChannelEnabled(size_t i)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 
 			//Undocumented command to toggle spectrum view state
 			if(IsSpectrum(i))
@@ -575,6 +590,7 @@ void TektronixOscilloscope::EnableChannel(size_t i)
 		{
 			case FAMILY_MSO5:
 			case FAMILY_MSO6:
+			case FAMILY_MDO4:
 				if(IsDigital(i))
 				{
 					//If the parent analog channel doesn't have a digital probe, we're disabled
@@ -599,6 +615,7 @@ void TektronixOscilloscope::EnableChannel(size_t i)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			if(IsSpectrum(i))
 				m_transport->SendCommandQueued(m_channels[i - m_spectrumChannelBase]->GetHwname() + ":SV:STATE ON");
 			else
@@ -675,6 +692,7 @@ void TektronixOscilloscope::DisableChannel(size_t i)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			if(IsSpectrum(i))
 				m_transport->SendCommandQueued(m_channels[i - m_spectrumChannelBase]->GetHwname() + ":SV:STATE OFF");
 			else
@@ -705,6 +723,7 @@ OscilloscopeChannel::CouplingType TektronixOscilloscope::GetChannelCoupling(size
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				string coup = m_transport->SendCommandQueuedWithReply(
 					GetOscilloscopeChannel(i)->GetHwname() + ":COUP?");
@@ -779,6 +798,7 @@ void TektronixOscilloscope::SetChannelCoupling(size_t i, OscilloscopeChannel::Co
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			switch(type)
 			{
 				case OscilloscopeChannel::COUPLE_DC_50:
@@ -850,6 +870,7 @@ double TektronixOscilloscope::GetChannelAttenuation(size_t i)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				float probegain = stof(
 					m_transport->SendCommandQueuedWithReply(GetOscilloscopeChannel(i)->GetHwname() + ":PRO:GAIN?"));
@@ -899,6 +920,7 @@ void TektronixOscilloscope::SetChannelAttenuation(size_t i, double atten)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				//This function takes the overall system attenuation as an argument.
 				//We need to scale this by the probe gain to figure out the necessary external attenuation.
@@ -935,6 +957,7 @@ unsigned int TektronixOscilloscope::GetChannelBandwidthLimit(size_t i)
 		{
 			case FAMILY_MSO5:
 			case FAMILY_MSO6:
+			case FAMILY_MDO4:
 				{
 					string reply = m_transport->SendCommandQueuedWithReply(GetOscilloscopeChannel(i)->GetHwname() + ":BAN?");
 					if(reply == "FUL")		//no limit
@@ -1024,6 +1047,11 @@ vector<unsigned int> TektronixOscilloscope::GetChannelBandwidthLimiters(size_t i
 				ret.push_back(0);
 
 			break;
+		case FAMILY_MDO4:
+			ret.push_back(20);
+			ret.push_back(200);
+			if (!is_1m)
+				ret.push_back(1000);
 
 		default:
 			break;
@@ -1047,6 +1075,7 @@ void TektronixOscilloscope::SetChannelBandwidthLimit(size_t i, unsigned int limi
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				//Instrument wants Hz, not MHz, or "FUL" for no limit
 				size_t limit_hz = limit_mhz;
@@ -1088,6 +1117,7 @@ float TektronixOscilloscope::GetChannelVoltageRange(size_t i, size_t /*stream*/)
 		{
 			case FAMILY_MSO5:
 			case FAMILY_MSO6:
+			case FAMILY_MDO4:
 				if(IsSpectrum(i))
 				{
 					range = 10 * stof(m_transport->SendCommandQueuedWithReply(
@@ -1130,6 +1160,7 @@ void TektronixOscilloscope::SetChannelVoltageRange(size_t i, size_t stream, floa
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			if(IsSpectrum(i))
 			{
 				float divsize = range/10;
@@ -1262,6 +1293,9 @@ string TektronixOscilloscope::GetChannelDisplayName(size_t i)
 			case FAMILY_MSO6:
 				name = TrimQuotes(m_transport->SendCommandQueuedWithReply(chan->GetHwname() + ":LAB:NAM?"));
 				break;
+			case FAMILY_MDO4:
+				name = TrimQuotes(m_transport->SendCommandQueuedWithReply(chan->GetHwname() + ":LAB?"));
+				break;
 
 			default:
 				break;
@@ -1304,6 +1338,9 @@ void TektronixOscilloscope::SetChannelDisplayName(size_t i, string name)
 			case FAMILY_MSO6:
 				m_transport->SendCommandQueued(chan->GetHwname() + ":LAB:NAM \"" + name + "\"");
 				break;
+			case FAMILY_MDO4:
+				m_transport->SendCommandQueued(chan->GetHwname() + ":LAB \"" + name + "\"");
+				break;
 
 			default:
 				break;
@@ -1335,6 +1372,7 @@ float TektronixOscilloscope::GetChannelOffset(size_t i, size_t stream)
 		{
 			case FAMILY_MSO5:
 			case FAMILY_MSO6:
+			case FAMILY_MDO4:
 				if(IsSpectrum(i))
 				{
 					//Position is reported in divisions, not dBm.
@@ -1378,11 +1416,13 @@ void TektronixOscilloscope::SetChannelOffset(size_t i, size_t stream, float offs
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			if(IsSpectrum(i))
 			{
 				float divsize = GetChannelVoltageRange(i, stream) / 10;
 				float offset_div = (offset / divsize) - 5;
 
+				// ????
 				m_transport->SendCommandQueued(string("DISP:SPECV:CH") + to_string(i-m_spectrumChannelBase+1) +
 					":VERT:POS " + to_string(offset_div));
 			}
@@ -1459,6 +1499,7 @@ bool TektronixOscilloscope::AcquireData()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			if(!AcquireDataMSO56(pending_waveforms))
 			{
 				//Clean up any partially acquired data
@@ -2249,6 +2290,7 @@ vector<uint64_t> TektronixOscilloscope::GetSampleRatesNonInterleaved()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				for(auto b : bases)
 					ret.push_back(b / 10);
@@ -2402,6 +2444,12 @@ uint64_t TektronixOscilloscope::GetSampleRate()
 			m_sampleRate = stod(m_transport->SendCommandQueuedWithReply("HOR:MODE:SAMPLER?"));
 
 			break;
+		case FAMILY_MDO4:
+			//stoull seems to not handle scientific notation
+			m_sampleRate = stod(m_transport->SendCommandQueuedWithReply("HOR:DIG:SAMPLER?"));
+
+			break;
+
 
 		default:
 			return 1;
@@ -2411,6 +2459,7 @@ uint64_t TektronixOscilloscope::GetSampleRate()
 	return m_sampleRate;
 }
 
+// AB HIER IM MANUAL GEGUCKT
 uint64_t TektronixOscilloscope::GetSampleDepth()
 {
 	//don't bother with mutexing here, worst case we return slightly stale data
@@ -2422,6 +2471,11 @@ uint64_t TektronixOscilloscope::GetSampleDepth()
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
 			m_sampleDepth = stos(m_transport->SendCommandQueuedWithReply("HOR:MODE:RECO?"));
+			m_transport->SendCommandQueued("DAT:START 0");
+			m_transport->SendCommandQueued(string("DAT:STOP ") + to_string(m_sampleDepth));
+			break;
+		case FAMILY_MDO4:
+			m_sampleDepth = stos(m_transport->SendCommandQueuedWithReply("HOR:RECO?"));
 			m_transport->SendCommandQueued("DAT:START 0");
 			m_transport->SendCommandQueued(string("DAT:STOP ") + to_string(m_sampleDepth));
 			break;
@@ -2463,6 +2517,11 @@ void TektronixOscilloscope::SetSampleDepth(uint64_t depth)
 			m_transport->SendCommandQueued("DAT:START 0");
 			m_transport->SendCommandQueued(string("DAT:STOP ") + to_string(depth));
 			break;
+		case FAMILY_MDO4:
+			m_transport->SendCommandQueued(string("HOR:RECO ") + to_string(depth));
+			m_transport->SendCommandQueued("DAT:START 0");
+			m_transport->SendCommandQueued(string("DAT:STOP ") + to_string(depth));
+			break;
 
 		default:
 			break;
@@ -2485,6 +2544,9 @@ void TektronixOscilloscope::SetSampleRate(uint64_t rate)
 		case FAMILY_MSO6:
 			m_transport->SendCommandQueued(string("HOR:MODE:SAMPLER ") + to_string(rate));
 			break;
+		case FAMILY_MDO4:
+			m_transport->SendCommandQueued(string("HOR:DIG:SAMPLER ") + to_string(rate));
+			break;
 
 		default:
 			break;
@@ -2497,6 +2559,7 @@ void TektronixOscilloscope::SetTriggerOffset(int64_t offset)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 		{
 			//Instrument reports position of trigger from the midpoint of the display
 			//but we want to know position from the start of the capture
@@ -2528,6 +2591,7 @@ int64_t TektronixOscilloscope::GetTriggerOffset()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 		{
 			//Instrument reports position of trigger from the midpoint of the display
 			double center_offset_sec = stod(m_transport->SendCommandQueuedWithReply("HOR:DELAY:TIME?"));
@@ -2566,6 +2630,7 @@ void TektronixOscilloscope::SetDeskewForChannel(size_t channel, int64_t skew)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			//Tek's skew convention has positive values move the channel EARLIER, so we need to flip sign
 			m_transport->SendCommandQueued(GetOscilloscopeChannel(channel)->GetHwname() + ":DESK " + to_string(-skew) + "E-15");
 			break;
@@ -2584,6 +2649,12 @@ void TektronixOscilloscope::EnableTriggerOutput()
 				m_transport->SendCommandQueued("AUX:SOU ATRIG");
 				m_transport->SendCommandQueued("AUX:EDGE RIS");
 			break;
+		case  FAMILY_MDO4:
+				m_transport->SendCommandQueued("AUXO:SOU ATRIG");
+				//TODO Does not exist?
+				//m_transport->SendCommandQueued("AUXO:EDGE RIS");
+			break;
+
 
 		default:
 			break;
@@ -2596,6 +2667,8 @@ void TektronixOscilloscope::SetUseExternalRefclk(bool external)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		// ROSc on MDO4
+		case FAMILY_MDO4:
 			if(external)
 				m_transport->SendCommandQueued("ROSC:SOU EXT");
 			else
@@ -2626,6 +2699,7 @@ int64_t TektronixOscilloscope::GetDeskewForChannel(size_t channel)
 		{
 			case FAMILY_MSO5:
 			case FAMILY_MSO6:
+			case FAMILY_MDO4:
 				//Tek's skew convention has positive values move the channel EARLIER, so we need to flip sign
 				deskew = -round(FS_PER_SECOND * stof(
 					m_transport->SendCommandQueuedWithReply(GetOscilloscopeChannel(channel)->GetHwname() + ":DESK?")));
@@ -2671,9 +2745,11 @@ void TektronixOscilloscope::PullTrigger()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				string reply = m_transport->SendCommandQueuedWithReply("TRIG:A:TYP?");
 
+				//TODO MDO4 also supports VIDeo, BUS, PULSe, LOGIc
 				if(reply == "EDG")
 					PullEdgeTrigger();
 				else if(reply == "WID")
@@ -2745,6 +2821,7 @@ void TektronixOscilloscope::PullEdgeTrigger()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				//Source channel
 				auto reply = m_transport->SendCommandQueuedWithReply("TRIG:A:EDGE:SOU?");
@@ -2904,6 +2981,7 @@ void TektronixOscilloscope::PullDropoutTrigger()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				//Source channel
 				auto reply = m_transport->SendCommandQueuedWithReply("TRIG:A:TIMEO:SOU?");
@@ -2954,6 +3032,7 @@ void TektronixOscilloscope::PullRuntTrigger()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				//Source channel
 				auto reply = m_transport->SendCommandQueuedWithReply("TRIG:A:RUNT:SOU?");
@@ -3022,6 +3101,7 @@ void TektronixOscilloscope::PullSlewRateTrigger()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				//Source channel
 				auto reply = m_transport->SendCommandQueuedWithReply("TRIG:A:TRAN:SOU?");
@@ -3192,6 +3272,7 @@ void TektronixOscilloscope::PushEdgeTrigger(EdgeTrigger* trig)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			{
 				m_transport->SendCommandQueued("TRIG:A:TYP EDGE");
 
@@ -3233,6 +3314,7 @@ void TektronixOscilloscope::PushEdgeTrigger(EdgeTrigger* trig)
 
 	@param trig	The trigger to push
  */
+//TODO: AB HIER NIX
 void TektronixOscilloscope::PushPulseWidthTrigger(PulseWidthTrigger* trig)
 {
 	switch(m_family)
@@ -3563,6 +3645,7 @@ vector<Oscilloscope::DigitalBank> TektronixOscilloscope::GetDigitalBanks()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			for(auto it : m_flexChannelParents)
 			{
 				DigitalBank bank;
@@ -3586,6 +3669,7 @@ Oscilloscope::DigitalBank TektronixOscilloscope::GetDigitalBank(size_t channel)
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			ret.push_back(GetOscilloscopeChannel(channel));
 			break;
 
@@ -3677,6 +3761,7 @@ bool TektronixOscilloscope::HasFrequencyControls()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
+		case FAMILY_MDO4:
 			return true;
 
 		default:
@@ -3699,6 +3784,9 @@ void TektronixOscilloscope::SetSpan(int64_t span)
 		case FAMILY_MSO6:
 			m_transport->SendCommandQueued(string("SV:SPAN ") + to_string(span));
 			break;
+		case FAMILY_MDO4:
+			m_transport->SendCommandQueued(string("RF:SPAN ") + to_string(span));
+			break;
 
 		default:
 			break;
@@ -3716,6 +3804,10 @@ int64_t TektronixOscilloscope::GetSpan()
 		case FAMILY_MSO6:
 			m_span = round(stod(m_transport->SendCommandQueuedWithReply("SV:SPAN?")));
 			break;
+		case FAMILY_MDO4:
+			m_span = round(stod(m_transport->SendCommandQueuedWithReply("RF:SPAN?")));
+			break;
+
 		default:
 			m_span = 1;
 	}
@@ -3741,6 +3833,10 @@ void TektronixOscilloscope::SetCenterFrequency(size_t channel, int64_t freq)
 		case FAMILY_MSO6:
 			m_transport->SendCommandQueued(
 				string("CH") + to_string(channel-m_spectrumChannelBase+1) + ":SV:CENTERFREQUENCY " + to_string(freq));
+			break;
+		case FAMILY_MDO4:
+			m_transport->SendCommandQueued(
+				string("CH") + to_string(channel-m_spectrumChannelBase+1) + ":RF:FREQ " + to_string(freq));
 			break;
 
 		default:
@@ -3769,6 +3865,11 @@ int64_t TektronixOscilloscope::GetCenterFrequency(size_t channel)
 				centerFrequency = round(stof(m_transport->SendCommandQueuedWithReply(
 					string("CH") + to_string(channel-m_spectrumChannelBase+1) + ":SV:CENTERFREQUENCY?")));
 				break;
+			case FAMILY_MDO4:
+				centerFrequency = round(stof(m_transport->SendCommandQueuedWithReply(
+					string("CH") + to_string(channel-m_spectrumChannelBase+1) + ":RF:FREQ?")));
+				break;
+
 			default:
 				centerFrequency = 0;
 				break;
@@ -3792,6 +3893,9 @@ void TektronixOscilloscope::SetResolutionBandwidth(int64_t rbw)
 		case FAMILY_MSO6:
 			m_transport->SendCommandQueued(string("SV:RBW ") + to_string(rbw));
 			break;
+		case FAMILY_MDO4:
+			m_transport->SendCommandQueued(string("RF:RBW ") + to_string(rbw));
+			break;
 
 		default:
 			break;
@@ -3808,6 +3912,10 @@ int64_t TektronixOscilloscope::GetResolutionBandwidth()
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
 			m_rbw = round(stod(m_transport->SendCommandQueuedWithReply("SV:RBW?")));
+			m_rbwValid = true;
+			return m_rbw;
+		case FAMILY_MDO4:
+			m_rbw = round(stod(m_transport->SendCommandQueuedWithReply("RF:RBW?")));
 			m_rbwValid = true;
 			return m_rbw;
 
@@ -4214,4 +4322,3 @@ void TektronixOscilloscope::SetFunctionChannelOutputImpedance(int chan, OutputIm
 	SetFunctionChannelAmplitude(chan, amp);
 	SetFunctionChannelOffset(chan, off);
 }
-

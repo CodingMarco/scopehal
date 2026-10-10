@@ -446,6 +446,9 @@ protected:
 		///@brief MSO6 series
 		FAMILY_MSO6,
 
+		///@brief MDO4 series
+		FAMILY_MDO4,
+
 		///@brief Other or unknown
 		FAMILY_UNKNOWN
 	} m_family;
