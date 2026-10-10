@@ -1767,6 +1767,18 @@ bool TektronixOscilloscope::ReadPreamble(string& preamble_in, mso56_preamble& pr
 
 		if (read == 22) return true;
 	}
+	else if (semicolons == 21)
+	{
+		read = sscanf(preamble_in.c_str(),
+			"%d;%d;%31[^;];%31[^;];%31[^;];%255[^;];%d;%c;%31[^;];"
+			"%31[^;];%lf;%lf;%d;%31[^;];%lf;%lf;%lf;%31[^;];%31[^;];%lf;%lf",
+			&p.byte_num, &p.bit_num, p.encoding, p.bin_format, p.byte_order, p.wfid,
+			&p.nr_pt, p.pt_fmt, p.pt_order, p.xunit, &p.xincrement, &p.xzero,
+			&p.pt_off, p.yunit, &p.ymult, &p.yoff, &p.yzero,
+			p.domain, p.wfmtype, &p.centerfreq, &p.span);
+
+		if(read == 21) return true;
+	}
 	else if (semicolons == 22)
 	{
 		read = sscanf(preamble_in.c_str(),
