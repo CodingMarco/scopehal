@@ -2395,7 +2395,6 @@ vector<uint64_t> TektronixOscilloscope::GetSampleRatesNonInterleaved()
 	{
 		case FAMILY_MSO5:
 		case FAMILY_MSO6:
-		case FAMILY_MDO4:
 			{
 				for(auto b : bases)
 					ret.push_back(b / 10);
@@ -2446,6 +2445,38 @@ vector<uint64_t> TektronixOscilloscope::GetSampleRatesNonInterleaved()
 
 			}
 			break;
+		case FAMILY_MDO4:
+			{
+				ret.push_back(2.5);
+				ret.push_back(5);
+				ret.push_back(10);
+				ret.push_back(25);
+				ret.push_back(50);
+				ret.push_back(100);
+				ret.push_back(250);
+				ret.push_back(500);
+				ret.push_back(1 * k);
+				ret.push_back(2.5 * k);
+				ret.push_back(5 * k);
+				ret.push_back(10 * k);
+				ret.push_back(25 * k);
+				ret.push_back(50 * k);
+				ret.push_back(100 * k);
+				ret.push_back(250 * k);
+				ret.push_back(500 * k);
+				ret.push_back(1 * m);
+				ret.push_back(2.5 * m);
+				ret.push_back(5 * m);
+				ret.push_back(10 * m);
+				ret.push_back(25 * m);
+				ret.push_back(50 * m);
+				ret.push_back(100 * m);
+				ret.push_back(250 * m);
+				ret.push_back(500 * m);
+				ret.push_back(1 * g);
+				ret.push_back(2.5 * g);
+				ret.push_back(5 * g);
+			}
 
 		default:
 			break;
@@ -2521,6 +2552,18 @@ vector<uint64_t> TektronixOscilloscope::GetSampleDepthsNonInterleaved()
 			}
 			break;
 
+		case FAMILY_MDO4:
+			{
+				ret.push_back(1 * k);
+				ret.push_back(10 * k);
+				ret.push_back(100 * k);
+				ret.push_back(1 * m);
+				ret.push_back(5 * m);
+				ret.push_back(10 * m);
+				ret.push_back(20 * m);
+			}
+			break;
+
 		default:
 			break;
 	}
@@ -2550,11 +2593,18 @@ uint64_t TektronixOscilloscope::GetSampleRate()
 
 			break;
 		case FAMILY_MDO4:
-			//stoull seems to not handle scientific notation
-			m_sampleRate = stod(m_transport->SendCommandQueuedWithReply("HOR:DIG:SAMPLER?"));
+		{
+			string hor_params = m_transport->SendCommandQueuedWithReply("HOR?", false);
+			char dummy[32];
+			double sampleRate;
+			sscanf(hor_params.c_str(),
+				"%31[^;];%31[^;];%31[^;];%lf",
+				dummy, dummy, dummy, &sampleRate);
+
+			m_sampleRate = sampleRate;
 
 			break;
-
+		}
 
 		default:
 			return 1;
@@ -2650,8 +2700,13 @@ void TektronixOscilloscope::SetSampleRate(uint64_t rate)
 			m_transport->SendCommandQueued(string("HOR:MODE:SAMPLER ") + to_string(rate));
 			break;
 		case FAMILY_MDO4:
-			m_transport->SendCommandQueued(string("HOR:DIG:SAMPLER ") + to_string(rate));
+		{
+			// We cannot set the sample depth directly, so auto
+			// t/div = record depth / sample rate / 10
+			double timePerDiv = (double)GetSampleDepth() / rate / 10.0;
+			m_transport->SendCommandQueued(string("HORizontal:SCAle ") + to_string(timePerDiv));
 			break;
+		}
 
 		default:
 			break;
